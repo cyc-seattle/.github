@@ -10,9 +10,11 @@ jobs:
     concurrency: release-${{ github.repository }}
     permissions:
       contents: write
-      pull-requests: write
       id-token: write
-      actions: write
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v6
       - uses: jdx/mise-action@v5
@@ -23,17 +25,43 @@ jobs:
         run: |
           npm install --global npm@^11.5.1
           npm --version
-      - id: changesets
-        uses: changesets/action@v2
-        with:
-          publish-script: pnpm exec changeset publish
-      # A PR opened with GITHUB_TOKEN starts no workflows, so start CI on the Version Packages branch.
-      - name: Run CI on the Version Packages PR
-        if: steps.changesets.outputs.pr-number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+      - name: Pick the bump from the PR labels
+        id: bump
         run: |
-          branch=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
-          gh workflow run pull-request.yml --ref "$branch"
+          labels=$(gh api "repos/$GH_REPO/commits/$GITHUB_SHA/pulls" \
+            --jq ".[] | select(.merge_commit_sha == \"$GITHUB_SHA\") | .labels[].name")
+          bump=patch
+          if grep -qx major <<<"$labels"; then
+            bump=major
+          elif grep -qx minor <<<"$labels"; then
+            bump=minor
+          fi
+          echo "bump=$bump" >>"$GITHUB_OUTPUT"
+      - name: Compute the next version
+        id: version
+        env:
+          BUMP: ${{ steps.bump.outputs.bump }}
+        run: |
+          name=$(node -p 'require("./package.json").name')
+          if ! current=$(npm view "$name" version); then
+            echo "::error::$name is not on npm. Publish the first version by hand, because npm trusted publishing needs an existing package."
+            exit 1
+          fi
+          next=$(node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const next = { major: [major + 1, 0, 0], minor: [major, minor + 1, 0], patch: [major, minor, patch + 1] };
+            console.log(next[process.argv[2]].join("."));
+          ' "$current" "$BUMP")
+          echo "$name: $current -> $next ($BUMP)"
+          echo "next=$next" >>"$GITHUB_OUTPUT"
+      # The version is set in the workspace only. It is never committed.
+      - name: Publish
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: |
+          npm pkg set "version=$NEXT"
+          pnpm publish --access public --no-git-checks
+      - name: Tag and create the GitHub release
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+        run: gh release create "v$NEXT" --target "$GITHUB_SHA" --generate-notes

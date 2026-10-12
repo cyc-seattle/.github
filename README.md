@@ -35,7 +35,9 @@ The required status check is `ci / ci`.
 
 ## Release an npm package from a repo
 
-The repo must use pnpm and changesets, and its CI caller must be `pull-request.yml` with `workflow_dispatch`.
+Every merge to `main` publishes a new patch version of the repo's npm package. To publish a bigger bump, add the `minor` or `major` label to the PR before you merge it.
+
+The repo must use pnpm and hold one package. Its `package.json` holds `"version": "0.0.0-development"`. npm and the git tags hold the real version.
 
 Add `.github/workflows/release.yml` to the repo:
 
@@ -48,30 +50,33 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
   id-token: write
-  actions: write
+  pull-requests: read
 
 jobs:
   release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v1.0.0
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.0.0
 ```
 
-The caller must grant all four permissions:
+The caller must grant all three permissions:
 
-| Permission             | Used to                                                   |
-| ---------------------- | --------------------------------------------------------- |
-| `contents: write`      | Push the version commit, tags, and releases               |
-| `pull-requests: write` | Open the "Version Packages" PR                            |
-| `id-token: write`      | Publish to npm with trusted publishing                    |
-| `actions: write`       | Start `pull-request.yml` on the "Version Packages" branch |
+| Permission            | Used to                                |
+| --------------------- | -------------------------------------- |
+| `contents: write`     | Create the tag and the GitHub release  |
+| `id-token: write`     | Publish to npm with trusted publishing |
+| `pull-requests: read` | Read the labels on the merged PR       |
 
-Then set up the repo:
+Then set up the package:
 
-1. Let GitHub Actions create and approve pull requests in the repo. For a cyc-seattle repo, the `bootstrap` Pulumi stack in `isthmia` sets this as code with `WorkflowRepositoryPermissions`. Add the repo there.
+1. Publish the first version by hand. npm trusted publishing needs a package that already exists.
 2. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
 
-The workflow runs `changesets/action`. If there are changesets, it opens or updates the "Version Packages" PR, then starts CI on it. When that PR merges, the workflow publishes with `pnpm exec changeset publish`. No npm token is used.
+On each run, the workflow:
+
+1. Reads the latest version from npm, and bumps it.
+2. Sets the new version in the CI workspace. It does not commit it.
+3. Publishes with `pnpm publish`. No npm token is used.
+4. Tags the commit `vX.Y.Z`, and creates a GitHub release with generated notes.
 
 ## Release a workflow change
 
