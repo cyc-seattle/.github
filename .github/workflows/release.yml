@@ -17,9 +17,6 @@ jobs:
           fetch-depth: 0
       - uses: jdx/mise-action@v5
       - run: mise run install
-      # Trusted publishing needs npm 11.5.1 or later. Node 22 ships npm 10.
-      - name: Install npm 11
-        run: npm install --global npm@^11.5.1
       # The comment and label options are off, so the job needs no issues or pull-requests permission,
       # and no `released` label is created.
       - name: Release
