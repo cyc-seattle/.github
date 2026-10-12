@@ -84,6 +84,6 @@ url = "https://nodejs.org/dist/v22.23.3/node-v22.23.3-win-x64.zip"
 
 [[tools."npm:prettier"]]
 version = "3.9.10"
-aube = { path = ".mise/locks/npm-prettier/3.9.10", digest = "sha256:0a52cf3e98ebe971f9f0c338c08e668756d290a8d14fe3fd308251084fba1522" }
+aube = { path = ".mise/locks/npm-prettier/3.9.10", digest = "sha256:0727ca9f7b5bb04aa38fbd156d77691adba1a5715239bd7a9377c6eab62dd5c3" }
 backend = "npm:prettier"
 specifiers = ["3"]
