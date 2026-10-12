@@ -5,10 +5,17 @@
   "semanticCommits": "disabled",
   "packageRules": [
     {
-      "description": "Hold Node at 22.",
-      "matchDatasources": ["node-version"],
-      "matchPackageNames": ["node"],
+      "description": "Hold Node at 22: the runtime and @types/node. Lift this rule and the next one together.",
+      "matchDatasources": ["node-version", "npm"],
+      "matchPackageNames": ["node", "@types/node"],
       "allowedVersions": "<23"
+    },
+    {
+      "description": "Hold Node at 22: keep @tsconfig/node22, and do not replace it with a later @tsconfig/nodeNN.",
+      "matchDatasources": ["npm"],
+      "matchPackageNames": ["@tsconfig/node*"],
+      "matchUpdateTypes": ["replacement"],
+      "enabled": false
     }
   ]
 }
