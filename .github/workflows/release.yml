@@ -10,30 +10,16 @@ jobs:
     concurrency: release-${{ github.repository }}
     permissions:
       contents: write
-      pull-requests: write
       id-token: write
-      actions: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: jdx/mise-action@v5
       - run: mise run install
-      # Trusted publishing needs npm 11.5.1 or later. Node 22 ships npm 10.
-      # pnpm 10 runs `npm publish` from the path.
-      - name: Install npm 11
-        run: |
-          npm install --global npm@^11.5.1
-          npm --version
-      - id: changesets
-        uses: changesets/action@v2
-        with:
-          publish-script: pnpm exec changeset publish
-      # A PR opened with GITHUB_TOKEN starts no workflows, so start CI on the Version Packages branch.
-      - name: Run CI on the Version Packages PR
-        if: steps.changesets.outputs.pr-number != ''
+      # The comment and label options are off, so the job needs no issues or pull-requests permission,
+      # and no `released` label is created.
+      - name: Release
+        run: npx --yes semantic-release@25 --no-success-comment --no-fail-comment --no-released-labels
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
-        run: |
-          branch=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
-          gh workflow run pull-request.yml --ref "$branch"
+          GITHUB_TOKEN: ${{ github.token }}

@@ -2,6 +2,8 @@ name: pull-request
 
 on:
   pull_request:
+    # edited: check the PR title again when it changes.
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
@@ -12,3 +14,7 @@ permissions:
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
+  pr-title:
+    uses: ./.github/workflows/pr-title.yml
+    permissions:
+      pull-requests: read

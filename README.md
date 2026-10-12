@@ -18,6 +18,7 @@ name: pull-request
 
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
@@ -27,15 +28,34 @@ permissions:
 
 jobs:
   ci:
-    uses: cyc-seattle/.github/.github/workflows/ci.yml@v1.0.0
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.0.0
+  pr-title:
+    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.0.0
+    permissions:
+      pull-requests: read
 ```
 
-The workflow installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`.
-The required status check is `ci / ci`.
+The workflow has two jobs:
+
+- `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. Its status check is `ci / ci`.
+- `pr-title` checks that the PR title is a conventional commit, with [`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request). It runs only on pull requests. Its status check is `pr-title / pr-title`.
+
+The `edited` type runs both jobs again when the PR title changes. Require both checks in the repo's ruleset.
 
 ## Release an npm package from a repo
 
-The repo must use pnpm and changesets, and its CI caller must be `pull-request.yml` with `workflow_dispatch`.
+Every merge to `main` runs [semantic-release](https://github.com/semantic-release/semantic-release). It reads the conventional commits since the last `vX.Y.Z` tag and picks the bump:
+
+| Commit            | Release |
+| ----------------- | ------- |
+| `fix:`            | Patch   |
+| `feat:`           | Minor   |
+| `feat!:`, `fix!:` | Major   |
+| Any other type    | None    |
+
+Then it publishes to npm with trusted publishing, tags the commit, and creates a GitHub release. It does not comment on issues or pull requests, and it adds no labels.
+
+The repo must hold one package. Its `package.json` holds `"version": "0.0.0-development"`. The git tags and npm hold the real version, and nothing is committed back.
 
 Add `.github/workflows/release.yml` to the repo:
 
@@ -48,30 +68,25 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
   id-token: write
-  actions: write
 
 jobs:
   release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v1.0.0
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.0.0
 ```
 
-The caller must grant all four permissions:
+The caller must grant both permissions:
 
-| Permission             | Used to                                                   |
-| ---------------------- | --------------------------------------------------------- |
-| `contents: write`      | Push the version commit, tags, and releases               |
-| `pull-requests: write` | Open the "Version Packages" PR                            |
-| `id-token: write`      | Publish to npm with trusted publishing                    |
-| `actions: write`       | Start `pull-request.yml` on the "Version Packages" branch |
+| Permission        | Used to                                     |
+| ----------------- | ------------------------------------------- |
+| `contents: write` | Push the tag, and create the GitHub release |
+| `id-token: write` | Publish to npm with trusted publishing      |
 
-Then set up the repo:
+### Set up a new package
 
-1. Let GitHub Actions create and approve pull requests in the repo. For a cyc-seattle repo, the `bootstrap` Pulumi stack in `isthmia` sets this as code with `WorkflowRepositoryPermissions`. Add the repo there.
-2. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
-
-The workflow runs `changesets/action`. If there are changesets, it opens or updates the "Version Packages" PR, then starts CI on it. When that PR merges, the workflow publishes with `pnpm exec changeset publish`. No npm token is used.
+1. Publish the first version by hand, for example `0.1.0`. npm trusted publishing needs a package that already exists.
+2. Tag the commit you published from with that version, for example `v0.1.0`, and push the tag. semantic-release counts from it.
+3. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
 
 ## Release a workflow change
 
