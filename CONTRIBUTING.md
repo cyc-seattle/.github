@@ -48,10 +48,19 @@ Plans live on issues. If a change needs a decision, post a plan on its issue bef
 
 ## Commits
 
-Write the subject in the imperative, and start it with a capital letter. Do not use a conventional-commit prefix such as `feat:` or `fix:`.
+Write each PR title as a [conventional commit](https://www.conventionalcommits.org/). The squash merge uses the PR title as the commit subject, and semantic-release reads it to pick the release. A required check rejects any other title.
 
-- Good: `Add the roster export`
-- Bad: `feat: added roster export`
+| Type                                           | Use it for                    | Release |
+| ---------------------------------------------- | ----------------------------- | ------- |
+| `fix:`                                         | A bug fix                     | Patch   |
+| `feat:`                                        | A new feature                 | Minor   |
+| `feat!:`, `fix!:`                              | A change that breaks callers  | Major   |
+| `chore:`, `docs:`, `ci:`, `test:`, `refactor:` | Work that changes no behavior | None    |
+
+Write the description in the imperative.
+
+- Good: `feat: add the roster export`
+- Bad: `Added roster export`
 
 ## Agents
 
