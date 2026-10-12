@@ -15,6 +15,12 @@
       "matchPackageNames": ["@tsconfig/node*"],
       "matchUpdateTypes": ["replacement"],
       "enabled": false
+    },
+    {
+      "description": "Hold ESLint at 9 until @cyc-seattle/ts-config and typescript-eslint support ESLint 10.",
+      "matchDatasources": ["npm"],
+      "matchPackageNames": ["eslint", "@eslint/js"],
+      "allowedVersions": "<10"
     }
   ]
 }
