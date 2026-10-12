@@ -2,12 +2,6 @@ name: release
 
 on:
   workflow_call:
-    inputs:
-      bump:
-        description: Force a patch, minor, or major bump. Empty means patch.
-        type: string
-        required: false
-        default: ""
 
 jobs:
   release:
@@ -19,32 +13,16 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: jdx/mise-action@v5
       - run: mise run install
       # Trusted publishing needs npm 11.5.1 or later. Node 22 ships npm 10.
-      # pnpm 10 runs `npm publish` from the path.
       - name: Install npm 11
         run: npm install --global npm@^11.5.1
-      # Dry run: compute the version from the latest vX.Y.Z tag, but create no tag yet.
-      - name: Compute the version
-        id: version
-        uses: mathieudutour/github-tag-action@v7
-        with:
-          github_token: ${{ github.token }}
-          dry_run: true
-          default_bump: patch
-          force_bump: ${{ inputs.bump }}
-      - name: Set the version in the workspace
-        if: steps.version.outputs.new_tag != ''
-        run: npm pkg set "version=$VERSION"
+      # The comment and label options are off, so the job needs no issues or pull-requests permission,
+      # and no `released` label is created.
+      - name: Release
+        run: npx --yes semantic-release@25 --no-success-comment --no-fail-comment --no-released-labels
         env:
-          VERSION: ${{ steps.version.outputs.new_version }}
-      - name: Publish
-        if: steps.version.outputs.new_tag != ''
-        run: pnpm publish --access public --no-git-checks
-      - name: Tag and create the GitHub release
-        if: steps.version.outputs.new_tag != ''
-        run: gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.new_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
