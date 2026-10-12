@@ -1,0 +1,38 @@
+name: Bug
+description: Report something that does not work as it should.
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: Do not report a security vulnerability here. Follow the security policy instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe what you saw. Paste any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The version, commit, or environment where you saw it.
+  - type: markdown
+    attributes:
+      value: Do not paste real personal data. Replace names, emails, and medical details with placeholders.
