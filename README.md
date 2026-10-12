@@ -35,9 +35,9 @@ The required status check is `ci / ci`.
 
 ## Release an npm package from a repo
 
-Every merge to `main` publishes a new patch version of the repo's npm package. To publish a bigger bump, add the `minor` or `major` label to the PR before you merge it.
+Every merge to `main` publishes a new patch version of the repo's npm package.
 
-The repo must use pnpm and hold one package. Its `package.json` holds `"version": "0.0.0-development"`. npm and the git tags hold the real version.
+The repo must use pnpm and hold one package. Its `package.json` holds `"version": "0.0.0-development"`. The git tags and npm hold the real version.
 
 Add `.github/workflows/release.yml` to the repo:
 
@@ -47,36 +47,51 @@ name: release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: The version part to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: write
   id-token: write
-  pull-requests: read
 
 jobs:
   release:
     uses: cyc-seattle/.github/.github/workflows/release.yml@v2.0.0
+    with:
+      bump: ${{ inputs.bump }}
 ```
 
-The caller must grant all three permissions:
+The caller must grant both permissions:
 
-| Permission            | Used to                                |
-| --------------------- | -------------------------------------- |
-| `contents: write`     | Create the tag and the GitHub release  |
-| `id-token: write`     | Publish to npm with trusted publishing |
-| `pull-requests: read` | Read the labels on the merged PR       |
+| Permission        | Used to                                                  |
+| ----------------- | -------------------------------------------------------- |
+| `contents: write` | Read the tags, and create the tag and the GitHub release |
+| `id-token: write` | Publish to npm with trusted publishing                   |
 
-Then set up the package:
+### How a release is cut
+
+1. [`mathieudutour/github-tag-action`](https://github.com/mathieudutour/github-tag-action) finds the latest `vX.Y.Z` tag and computes the next version. It creates no tag yet.
+2. The workflow sets that version in the CI workspace. It does not commit it.
+3. The workflow publishes with `pnpm publish`. No npm token is used.
+4. If the publish succeeds, the workflow tags the commit `vX.Y.Z` and creates a GitHub release with generated notes.
+
+### Release a minor or major version
+
+1. Merge the change. The merge releases a patch.
+2. In the repo's **Actions** tab, run the `release` workflow on `main`. Set **bump** to `minor` or `major`.
+
+Do not start a commit subject with a conventional-commit prefix. The tag action reads `feat:` as a minor bump and `feat!:` as a major bump.
+
+### Set up a new package
 
 1. Publish the first version by hand. npm trusted publishing needs a package that already exists.
-2. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
-
-On each run, the workflow:
-
-1. Reads the latest version from npm, and bumps it.
-2. Sets the new version in the CI workspace. It does not commit it.
-3. Publishes with `pnpm publish`. No npm token is used.
-4. Tags the commit `vX.Y.Z`, and creates a GitHub release with generated notes.
+2. Tag the commit you published from with that version, for example `v0.1.0`, and push the tag. The tag action counts from it.
+3. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
 
 ## Release a workflow change
 
