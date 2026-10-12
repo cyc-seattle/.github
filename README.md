@@ -68,7 +68,7 @@ The caller must grant all four permissions:
 
 Then set up the repo:
 
-1. In the repo settings, under **Actions > General**, turn on **Allow GitHub Actions to create and approve pull requests**.
+1. Let GitHub Actions create and approve pull requests in the repo. For a cyc-seattle repo, the `bootstrap` Pulumi stack in `isthmia` sets this as code with `WorkflowRepositoryPermissions`. Add the repo there.
 2. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
 
 The workflow runs `changesets/action`. If there are changesets, it opens or updates the "Version Packages" PR, then starts CI on it. When that PR merges, the workflow publishes with `pnpm exec changeset publish`. No npm token is used.
