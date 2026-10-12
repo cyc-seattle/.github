@@ -18,6 +18,7 @@ name: pull-request
 
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
@@ -27,11 +28,19 @@ permissions:
 
 jobs:
   ci:
-    uses: cyc-seattle/.github/.github/workflows/ci.yml@v1.0.0
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.0.0
+  pr-title:
+    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.0.0
+    permissions:
+      pull-requests: read
 ```
 
-The workflow installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`.
-The required status check is `ci / ci`.
+The workflow has two jobs:
+
+- `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. Its status check is `ci / ci`.
+- `pr-title` checks that the PR title is a conventional commit, with [`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request). It runs only on pull requests. Its status check is `pr-title / pr-title`.
+
+The `edited` type runs both jobs again when the PR title changes. Require both checks in the repo's ruleset.
 
 ## Release an npm package from a repo
 
