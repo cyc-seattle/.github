@@ -1,7 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "group:allNonMajor"],
-  "labels": ["dependencies"],
   "semanticCommits": "disabled",
   "packageRules": [
     {
