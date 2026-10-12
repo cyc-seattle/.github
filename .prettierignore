@@ -1,0 +1,2 @@
+# mise owns these files and checks them against a digest in mise.lock.
+.mise/

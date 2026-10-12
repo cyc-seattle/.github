@@ -1,0 +1,27 @@
+[settings]
+lockfile = true
+
+[tools]
+"npm:prettier" = "3"
+actionlint = "1"
+node = "22"
+
+[tasks.install]
+description = "Install the tools in mise.lock. This repo has no packages."
+run = "mise install"
+
+[tasks.format]
+description = "Format all files"
+run = "prettier --write ."
+
+[tasks.check]
+description = "Check formatting and lint the workflows"
+run = ["prettier --check .", "actionlint"]
+
+[tasks.test]
+description = "Run the tests. This repo has no tests."
+run = "true"
+
+[tasks.ci]
+description = "Run every check that CI runs"
+depends = ["check", "test"]
