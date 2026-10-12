@@ -27,13 +27,27 @@ jobs:
         uses: changesets/action@v2
         with:
           publish-script: pnpm exec changeset publish
-      # A PR opened with GITHUB_TOKEN starts no workflows, so start CI on the Version Packages branch.
-      - name: Run CI on the Version Packages PR
+      # GitHub holds the pull_request runs on a PR that GITHUB_TOKEN opens or updates until someone approves them.
+      # A run that workflow_dispatch starts does not attach its check to the PR.
+      - name: Approve CI on the Version Packages PR
         if: steps.changesets.outputs.pr-number != ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
         run: |
-          branch=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
-          gh workflow run pull-request.yml --ref "$branch"
+          sha=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)
+          for _ in $(seq 24); do
+            runs=$(gh api "repos/$GH_REPO/actions/runs?event=pull_request&head_sha=$sha" --jq '.workflow_runs[] | "\(.id) \(.status)"')
+            if [ -n "$runs" ]; then
+              echo "$runs" | while read -r id status; do
+                if [ "$status" = action_required ]; then
+                  gh api -X POST "repos/$GH_REPO/actions/runs/$id/approve"
+                  echo "Approved run $id."
+                fi
+              done
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "No pull_request run appeared for $sha. Nothing to approve."

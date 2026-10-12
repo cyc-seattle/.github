@@ -35,7 +35,7 @@ The required status check is `ci / ci`.
 
 ## Release an npm package from a repo
 
-The repo must use pnpm and changesets, and its CI caller must be `pull-request.yml` with `workflow_dispatch`.
+The repo must use pnpm and changesets, and its CI must run on `pull_request`.
 
 Add `.github/workflows/release.yml` to the repo:
 
@@ -59,19 +59,19 @@ jobs:
 
 The caller must grant all four permissions:
 
-| Permission             | Used to                                                   |
-| ---------------------- | --------------------------------------------------------- |
-| `contents: write`      | Push the version commit, tags, and releases               |
-| `pull-requests: write` | Open the "Version Packages" PR                            |
-| `id-token: write`      | Publish to npm with trusted publishing                    |
-| `actions: write`       | Start `pull-request.yml` on the "Version Packages" branch |
+| Permission             | Used to                                              |
+| ---------------------- | ---------------------------------------------------- |
+| `contents: write`      | Push the version commit, tags, and releases          |
+| `pull-requests: write` | Open the "Version Packages" PR                       |
+| `id-token: write`      | Publish to npm with trusted publishing               |
+| `actions: write`       | Approve the held CI run on the "Version Packages" PR |
 
 Then set up the repo:
 
 1. Let GitHub Actions create and approve pull requests in the repo. For a cyc-seattle repo, the `bootstrap` Pulumi stack in `isthmia` sets this as code with `WorkflowRepositoryPermissions`. Add the repo there.
 2. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
 
-The workflow runs `changesets/action`. If there are changesets, it opens or updates the "Version Packages" PR, then starts CI on it. When that PR merges, the workflow publishes with `pnpm exec changeset publish`. No npm token is used.
+The workflow runs `changesets/action`. If there are changesets, it opens or updates the "Version Packages" PR. GitHub holds the CI run on a PR that a workflow opens, so the workflow approves that run. When that PR merges, the workflow publishes with `pnpm exec changeset publish`. No npm token is used.
 
 ## Release a workflow change
 
