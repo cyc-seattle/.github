@@ -32,12 +32,12 @@ jobs:
           fetch-depth: 0
       - uses: jdx/mise-action@v5
       - run: mise run install
-      # The comment and label options are off, so the job needs no issues or pull-requests permission,
-      # and no `released` label is created.
       # semantic-release tags the commit it releases, so a changed latest tag means this run released.
       - name: Find the current version
         id: before
         run: echo "tag=$(git describe --tags --abbrev=0 --match 'v*' || true)" >> "$GITHUB_OUTPUT"
+      # The comment and label options are off, so the job needs no issues or pull-requests permission,
+      # and no `released` label is created.
       - name: Release
         run: npx --yes semantic-release@25 --no-success-comment --no-fail-comment --no-released-labels
         env:
