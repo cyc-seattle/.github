@@ -6,7 +6,7 @@ This repo holds:
 
 - Default community health files, such as the contributing guide and security policy.
 - The organization profile.
-- Reusable workflows: `ci.yml` and `release.yml`.
+- Reusable workflows: `ci.yml`, `release.yml`, and `deploy.yml`.
 - The shared Renovate preset.
 
 ## Run CI from a repo
@@ -87,6 +87,60 @@ The caller must grant both permissions:
 1. Publish the first version by hand, for example `0.1.0`. npm trusted publishing needs a package that already exists.
 2. Tag the commit you published from with that version, for example `v0.1.0`, and push the tag. semantic-release counts from it.
 3. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
+
+## Deploy from a repo
+
+`deploy.yml` runs a Pulumi preview or deploy from GitHub Actions, with no stored credentials. It authenticates to Google Cloud with Workload Identity Federation. Call it once for each environment:
+
+```yaml
+jobs:
+  dev:
+    needs: ci
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.1.0
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      task: deploy
+      integration: true
+```
+
+| Input         | Does                                                                |
+| ------------- | ------------------------------------------------------------------- |
+| `environment` | Required. The GitHub environment the job runs in, for example `dev` |
+| `task`        | Required. `preview` or `deploy`. The job fails on any other value   |
+| `integration` | Runs `mise run integration` after the task. Defaults to false       |
+
+The caller must grant `id-token: write` and `contents: read`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
+
+The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting.
+
+The environment must hold these variables:
+
+| Variable                         | Holds                                             |
+| -------------------------------- | ------------------------------------------------- |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | The full name of the Workload Identity provider   |
+| `GCP_SERVICE_ACCOUNT`            | The email of the service account to impersonate   |
+| `PULUMI_BACKEND_URL`             | The GCS state bucket, for example `gs://<bucket>` |
+
+The job sets `PULUMI_STACK` to `dev` for the `dev` environment and `prod` for any other. The repo's `mise.toml` must define these tasks:
+
+| Task          | Does                                                         |
+| ------------- | ------------------------------------------------------------ |
+| `install`     | Installs the dependencies                                    |
+| `preview`     | Previews the stack. The job writes its output to the summary |
+| `deploy`      | Applies the stack                                            |
+| `integration` | Runs the integration tests against the deployed environment  |
+
+A repo that never sets `integration: true` can leave out that task.
+
+The auth step sets `GOOGLE_APPLICATION_CREDENTIALS` to the credentials it creates. The caller's `mise.toml` must not override it when it is already set, or Pulumi loses those credentials. For example:
+
+```toml
+[env]
+GOOGLE_APPLICATION_CREDENTIALS = "{{ get_env(name='GOOGLE_APPLICATION_CREDENTIALS', default='<path for local deploys>') }}"
+```
 
 ## Release a workflow change
 
