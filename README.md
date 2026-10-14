@@ -82,6 +82,31 @@ The caller must grant both permissions:
 | `contents: write` | Push the tag, and create the GitHub release |
 | `id-token: write` | Publish to npm with trusted publishing      |
 
+### Publish a container image
+
+Pass `image` to also publish a container image when a run releases a new version. The run builds `linux/amd64` and pushes `<image>:<version>` and `<image>:latest` to GHCR. The version has no `v`. A run that releases nothing pushes nothing. The release runs first, so a failed build leaves the tag in place. The image is built inside `release.yml` because a tag pushed with `GITHUB_TOKEN` starts no other workflow.
+
+```yaml
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  release:
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.2.0
+    with:
+      image: ghcr.io/cyc-seattle/clubspot-fake
+```
+
+| Input           | Does                                                                |
+| --------------- | ------------------------------------------------------------------- |
+| `image`         | The image name, with registry. Leave it out to publish no image     |
+| `image-context` | The Docker build context. Defaults to `.`                           |
+| `image-file`    | The Dockerfile, relative to the repo root. Defaults to `Dockerfile` |
+
+The caller must also grant `packages: write`. The image carries the `org.opencontainers.image.source` label, so GHCR links the package to the caller's repo and gives it that repo's visibility. A package pushed for the first time under a private repo is private. Make the repo public before the first release if the image must be public.
+
 ### Set up a new package
 
 1. Publish the first version by hand, for example `0.1.0`. npm trusted publishing needs a package that already exists.
@@ -106,11 +131,11 @@ jobs:
       integration: true
 ```
 
-| Input         | Does                                                                |
-| ------------- | ------------------------------------------------------------------- |
-| `environment` | Required. The GitHub environment the job runs in, for example `dev` |
-| `task`        | Required. `preview` or `deploy`. The job fails on any other value   |
-| `integration` | Runs `mise run integration` after the task. Defaults to false       |
+| Input         | Does                                                                        |
+| ------------- | --------------------------------------------------------------------------- |
+| `environment` | Required. The GitHub environment the job runs in, for example `dev`         |
+| `task`        | Required. `preview`, `deploy`, or `reset`. The job fails on any other value |
+| `integration` | Runs `mise run integration` after the task. Defaults to false               |
 
 The caller must grant `id-token: write` and `contents: read`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
 
@@ -131,6 +156,7 @@ The job sets `PULUMI_STACK` to `dev` for the `dev` environment and `prod` for an
 | `install`     | Installs the dependencies                                    |
 | `preview`     | Previews the stack. The job writes its output to the summary |
 | `deploy`      | Applies the stack                                            |
+| `reset`       | Only for `task: reset`. Resets the environment               |
 | `integration` | Runs the integration tests against the deployed environment  |
 
 A repo that never sets `integration: true` can leave out that task.
