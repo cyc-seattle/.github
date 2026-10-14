@@ -105,7 +105,7 @@ jobs:
 | `image-context` | The Docker build context. Defaults to `.`                           |
 | `image-file`    | The Dockerfile, relative to the repo root. Defaults to `Dockerfile` |
 
-The caller must also grant `packages: write`. The image carries the `org.opencontainers.image.source` label, so GHCR links the package to the caller's repo and gives it that repo's visibility. A package pushed for the first time under a private repo is private. Make the repo public before the first release if the image must be public.
+The image is built by a separate `image` job, so only callers that pass `image` grant `packages: write`. Callers that publish no image need no change. The job checks out the repo, which `contents: write` already covers. The image carries the `org.opencontainers.image.source` label, so GHCR links the package to the caller's repo and gives it that repo's visibility. A package pushed for the first time under a private repo is private. Make the repo public before the first release if the image must be public.
 
 ### Set up a new package
 
