@@ -1,0 +1,62 @@
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: The GitHub environment to deploy to, such as `dev`, `prod-preview`, or `prod`.
+        type: string
+        required: true
+      task:
+        description: The mise task to run, `preview` or `deploy`.
+        type: string
+        required: true
+      integration:
+        description: Run `mise run integration` after the task.
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    # One deploy at a time per repo and environment. Cancelling a Pulumi update halfway leaves a lock behind.
+    concurrency:
+      group: deploy-${{ github.repository }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
+      PULUMI_STACK: ${{ inputs.environment == 'dev' && 'dev' || 'prod' }}
+    steps:
+      # workflow_call has no choice type. The value also goes into a shell command below.
+      - name: Check the task
+        run: test "$TASK" = preview -o "$TASK" = deploy || { echo "::error::task must be preview or deploy, not '$TASK'"; exit 1; }
+        env:
+          TASK: ${{ inputs.task }}
+      - uses: actions/checkout@v6
+      - uses: jdx/mise-action@v5
+      # This sets GOOGLE_APPLICATION_CREDENTIALS, so the caller's mise.toml must not override it.
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      - run: mise run install
+      # The fence keeps Markdown from folding the preview into one paragraph. pipefail comes from `shell: bash`.
+      - name: Run the task
+        id: task
+        shell: bash
+        run: |
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          mise run "$TASK" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          TASK: ${{ inputs.task }}
+      - name: Close the summary fence
+        if: always() && steps.task.conclusion != 'skipped'
+        run: echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - name: Integration tests
+        if: inputs.integration
+        run: mise run integration
