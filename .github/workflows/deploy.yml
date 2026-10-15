@@ -39,7 +39,7 @@ jobs:
           [[ "$TASK" =~ ^(preview|deploy|reset)$ ]] || { echo "::error::task must be preview, deploy, or reset, not '$TASK'"; exit 1; }
         env:
           TASK: ${{ inputs.task }}
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
       # This sets GOOGLE_APPLICATION_CREDENTIALS, so the caller's mise.toml must not override it.
       - uses: google-github-actions/auth@v3
