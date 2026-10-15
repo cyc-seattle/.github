@@ -8,7 +8,7 @@ on:
         type: string
         required: true
       task:
-        description: The mise task to run, `preview` or `deploy`.
+        description: The mise task to run, `preview`, `deploy`, or `reset`.
         type: string
         required: true
       integration:
@@ -34,7 +34,9 @@ jobs:
     steps:
       # workflow_call has no choice type. The value also goes into a shell command below.
       - name: Check the task
-        run: test "$TASK" = preview -o "$TASK" = deploy || { echo "::error::task must be preview or deploy, not '$TASK'"; exit 1; }
+        shell: bash
+        run: |
+          [[ "$TASK" =~ ^(preview|deploy|reset)$ ]] || { echo "::error::task must be preview, deploy, or reset, not '$TASK'"; exit 1; }
         env:
           TASK: ${{ inputs.task }}
       - uses: actions/checkout@v6
