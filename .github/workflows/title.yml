@@ -1,0 +1,14 @@
+name: pr-title
+
+# Its own workflow, so a PR edit reruns only the title check, not CI. The job ID keeps the check name
+# `pr-title / pr-title`, which the ruleset requires.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    uses: ./.github/workflows/pr-title.yml
