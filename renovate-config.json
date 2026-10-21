@@ -2,9 +2,12 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended", "group:allNonMajor"],
   "semanticCommits": "enabled",
+  "constraints": {
+    "node": "22"
+  },
   "packageRules": [
     {
-      "description": "Hold Node at 22: the runtime and @types/node. Lift this rule and the next one together.",
+      "description": "Hold Node at 22: the runtime and @types/node. Lift this rule, the next one, and constraints.node together.",
       "matchDatasources": ["node-version", "npm"],
       "matchPackageNames": ["node", "@types/node"],
       "allowedVersions": "<23"

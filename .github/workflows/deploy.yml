@@ -8,9 +8,13 @@ on:
         type: string
         required: true
       task:
-        description: The mise task to run, `preview`, `deploy`, or `reset`.
+        description: The mise task to run, `preview`, `deploy`, or `reset`. `none` runs no task, for integration alone.
         type: string
         required: true
+      projects:
+        description: The Pulumi projects to run the task on, separated by spaces. Empty means the caller's full list.
+        type: string
+        default: ""
       integration:
         description: Run `mise run integration` after the task.
         type: boolean
@@ -31,16 +35,24 @@ jobs:
     env:
       PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
       PULUMI_STACK: ${{ inputs.environment == 'dev' && 'dev' || 'prod' }}
+      # Pulumi authenticates its plugin downloads from GitHub releases with this, which avoids the anonymous rate limit.
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       # workflow_call has no choice type. The value also goes into a shell command below.
       - name: Check the task
         shell: bash
         run: |
-          [[ "$TASK" =~ ^(preview|deploy|reset)$ ]] || { echo "::error::task must be preview, deploy, or reset, not '$TASK'"; exit 1; }
+          [[ "$TASK" =~ ^(preview|deploy|reset|none)$ ]] || { echo "::error::task must be preview, deploy, reset, or none, not '$TASK'"; exit 1; }
         env:
           TASK: ${{ inputs.task }}
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+      # The lockfiles pin the Pulumi CLI and the providers, so they pick the plugins.
+      - uses: actions/cache@v6
+        with:
+          path: ~/.pulumi/plugins
+          key: pulumi-plugins-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'mise.lock') }}
+          restore-keys: pulumi-plugins-${{ runner.os }}-
       # This sets GOOGLE_APPLICATION_CREDENTIALS, so the caller's mise.toml must not override it.
       - uses: google-github-actions/auth@v3
         with:
@@ -50,15 +62,19 @@ jobs:
       # The fence keeps Markdown from folding the preview into one paragraph. pipefail comes from `shell: bash`.
       - name: Run the task
         id: task
+        if: inputs.task != 'none'
         shell: bash
         run: |
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           mise run "$TASK" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
         env:
           TASK: ${{ inputs.task }}
+          DEPLOY_PROJECTS: ${{ inputs.projects }}
       - name: Close the summary fence
         if: always() && steps.task.conclusion != 'skipped'
         run: echo '```' >> "$GITHUB_STEP_SUMMARY"
       - name: Integration tests
         if: inputs.integration
         run: mise run integration
+        env:
+          DEPLOY_PROJECTS: ${{ inputs.projects }}

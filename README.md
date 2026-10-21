@@ -37,7 +37,7 @@ jobs:
 
 The workflow has two jobs:
 
-- `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. Its status check is `ci / ci`.
+- `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. The install gets the run's `GITHUB_TOKEN`, so Pulumi's plugin downloads are authenticated. Its status check is `ci / ci`.
 - `pr-title` checks that the PR title is a conventional commit, with [`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request). It runs only on pull requests. Its status check is `pr-title / pr-title`.
 
 The `edited` type runs both jobs again when the PR title changes. Require both checks in the repo's ruleset.
@@ -131,13 +131,16 @@ jobs:
       integration: true
 ```
 
-| Input         | Does                                                                        |
-| ------------- | --------------------------------------------------------------------------- |
-| `environment` | Required. The GitHub environment the job runs in, for example `dev`         |
-| `task`        | Required. `preview`, `deploy`, or `reset`. The job fails on any other value |
-| `integration` | Runs `mise run integration` after the task. Defaults to false               |
+| Input         | Does                                                                                |
+| ------------- | ----------------------------------------------------------------------------------- |
+| `environment` | Required. The GitHub environment the job runs in, for example `dev`                 |
+| `task`        | Required. `preview`, `deploy`, `reset`, or `none`. The job fails on any other value |
+| `projects`    | The Pulumi projects to run on, separated by spaces. Defaults to empty, for all      |
+| `integration` | Runs `mise run integration` after the task. Defaults to false                       |
 
-The caller must grant `id-token: write` and `contents: read`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
+`none` runs no task, but still checks out, authenticates, and installs, so `integration: true` runs the integration tests alone against what is already deployed. The task and the integration tests get `projects` as `DEPLOY_PROJECTS`. The caller's tasks pick what to run from it, and treat an empty value as their full list.
+
+The caller must grant `id-token: write` and `contents: read`. The job passes the run's `GITHUB_TOKEN` to every step, so Pulumi's plugin downloads from GitHub releases are authenticated and avoid the anonymous rate limit. It caches `~/.pulumi/plugins` between runs, keyed on `pnpm-lock.yaml` and `mise.lock`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
 
 The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting.
 
