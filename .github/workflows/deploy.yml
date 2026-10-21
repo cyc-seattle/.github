@@ -19,12 +19,18 @@ on:
         description: Run `mise run integration` after the task.
         type: boolean
         default: false
+    outputs:
+      changes:
+        description: For `preview`, `true` if the preview shows changes and `false` if not. Empty for any other task.
+        value: ${{ jobs.deploy.outputs.changes }}
 
 jobs:
   deploy:
     name: deploy
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    outputs:
+      changes: ${{ steps.changes.outputs.changes }}
     # One deploy at a time per repo and environment. Cancelling a Pulumi update halfway leaves a lock behind.
     concurrency:
       group: deploy-${{ github.repository }}-${{ inputs.environment }}
@@ -70,9 +76,32 @@ jobs:
         env:
           TASK: ${{ inputs.task }}
           DEPLOY_PROJECTS: ${{ inputs.projects }}
+          DEPLOY_CHANGES_FILE: ${{ runner.temp }}/deploy-changes
       - name: Close the summary fence
         if: always() && steps.task.conclusion != 'skipped'
         run: echo '```' >> "$GITHUB_STEP_SUMMARY"
+      # A failed preview has already failed the job, so it never reads as no changes.
+      - name: Read the preview's changes
+        id: changes
+        if: inputs.task == 'preview'
+        shell: bash
+        run: |
+          if [[ ! -s "$DEPLOY_CHANGES_FILE" ]]; then
+            # A caller whose preview task doesn't report keeps deploying every time.
+            echo "::notice::The preview task reported nothing, so changes is true."
+            changes=true
+          elif grep -qvxE 'true|false' "$DEPLOY_CHANGES_FILE"; then
+            echo "::error::Each line of DEPLOY_CHANGES_FILE must be true or false."
+            cat "$DEPLOY_CHANGES_FILE"
+            exit 1
+          elif grep -qx true "$DEPLOY_CHANGES_FILE"; then
+            changes=true
+          else
+            changes=false
+          fi
+          echo "changes=$changes" | tee -a "$GITHUB_OUTPUT"
+        env:
+          DEPLOY_CHANGES_FILE: ${{ runner.temp }}/deploy-changes
       - name: Integration tests
         if: inputs.integration
         run: mise run integration
