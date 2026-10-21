@@ -11,14 +11,14 @@ This repo holds:
 
 ## Run CI from a repo
 
-Add `.github/workflows/pull-request.yml` to the repo:
+Add two workflows to the repo. `.github/workflows/pull-request.yml` runs CI:
 
 ```yaml
 name: pull-request
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   workflow_dispatch:
@@ -29,18 +29,29 @@ permissions:
 jobs:
   ci:
     uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.0.0
-  pr-title:
-    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.0.0
-    permissions:
-      pull-requests: read
 ```
 
-The workflow has two jobs:
+`.github/workflows/pr-title.yml` checks the PR title:
+
+```yaml
+name: pr-title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  pr-title:
+    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.0.0
+```
 
 - `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. Its status check is `ci / ci`.
 - `pr-title` checks that the PR title is a conventional commit, with [`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request). It runs only on pull requests. Its status check is `pr-title / pr-title`.
 
-The `edited` type runs both jobs again when the PR title changes. Require both checks in the repo's ruleset.
+Only `pr-title.yml` listens for `edited`, so editing a PR's title or description reruns the title check and nothing else. Keep the job IDs `ci` and `pr-title`, because they name the status checks. Require both checks in the repo's ruleset.
 
 ## Release an npm package from a repo
 
