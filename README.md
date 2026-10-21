@@ -182,6 +182,50 @@ The auth step sets `GOOGLE_APPLICATION_CREDENTIALS` to the credentials it create
 GOOGLE_APPLICATION_CREDENTIALS = "{{ get_env(name='GOOGLE_APPLICATION_CREDENTIALS', default='<path for local deploys>') }}"
 ```
 
+### Skip a deploy that changes nothing
+
+For `task: preview`, the workflow has an output, `changes`: `'true'` if the preview shows changes, and `'false'` if not. For any other task it is empty. Gate the deploy job on it, so a deploy that would change nothing never starts, and never asks for the environment's approval:
+
+```yaml
+prod-preview:
+  uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.4.0
+  with:
+    environment: prod-preview
+    task: preview
+prod:
+  needs: prod-preview
+  if: needs.prod-preview.outputs.changes == 'true'
+  uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.4.0
+  with:
+    environment: prod
+    task: deploy
+```
+
+The caller's `preview` task reports the changes. The workflow sets `DEPLOY_CHANGES_FILE` to the path of an empty file, and the task appends one line for each Pulumi project it previews: `true` if that project has changes, `false` if not. Then `changes` is:
+
+| The file holds                    | `changes`     |
+| --------------------------------- | ------------- |
+| At least one `true`               | `'true'`      |
+| Only `false` lines                | `'false'`     |
+| Nothing                           | `'true'`      |
+| Any line other than true or false | The job fails |
+
+A task that reports nothing keeps deploying every time, so a caller that hasn't adopted this needs no change. A preview that fails fails the job, so it never reads as no changes. To compute a project's line, preview it with `--expect-no-changes`. It exits 0 when nothing changes. When something does, it fails with `no changes were expected but changes were proposed`. Any other failure is a failed preview, so fail the task:
+
+```bash
+status=0
+pulumi preview --cwd "stacks/$project" --expect-no-changes 2>&1 | tee "$out" || status=$?
+if ((status == 0)); then
+  echo false >> "$DEPLOY_CHANGES_FILE"
+elif grep -q 'no changes were expected.* but changes were proposed' "$out"; then
+  echo true >> "$DEPLOY_CHANGES_FILE"
+else
+  exit "$status"
+fi
+```
+
+cyc-seattle/platform's `scripts/each-stack` does this for each project.
+
 ## Update dependencies with Renovate
 
 Every repo's `renovate.json` extends the shared preset, `renovate-config.json`:
