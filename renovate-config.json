@@ -1,11 +1,33 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "group:allNonMajor"],
+  "extends": ["config:recommended"],
   "semanticCommits": "enabled",
+  "timezone": "America/Los_Angeles",
+  "platformAutomerge": true,
   "constraints": {
     "node": "22"
   },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["* 0-5 1 * *"]
+  },
   "packageRules": [
+    {
+      "description": "One PR a week for every non-major update. It merges itself once the required checks pass.",
+      "matchPackageNames": ["*"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch",
+      "schedule": ["* 0-5 * * 1"],
+      "automerge": true
+    },
+    {
+      "description": "A major update opens only once a maintainer ticks it on the Dependency Dashboard, and never merges itself.",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
     {
       "description": "Hold Node at 22: the runtime and @types/node. Lift this rule, the next one, and constraints.node together.",
       "matchDatasources": ["node-version", "npm"],

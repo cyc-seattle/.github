@@ -226,6 +226,33 @@ fi
 
 cyc-seattle/platform's `scripts/each-stack` does this for each project.
 
+## Update dependencies with Renovate
+
+Every repo's `renovate.json` extends the shared preset, `renovate-config.json`:
+
+```json
+{ "extends": ["local>cyc-seattle/.github:renovate-config"] }
+```
+
+The preset decides what Renovate opens and what merges itself. Times are in `America/Los_Angeles`.
+
+| Update                        | PR                                                       | Merges                                |
+| ----------------------------- | -------------------------------------------------------- | ------------------------------------- |
+| Minor, patch, pin, and digest | One grouped PR per repo, opened before 6am on Mondays    | Itself, once the required checks pass |
+| Major                         | One PR each, once a maintainer ticks it on the dashboard | By hand                               |
+| Lockfile maintenance          | One PR, opened before 6am on the first of the month      | Itself, once the required checks pass |
+
+- Automerge uses GitHub's native auto-merge, so the repo must allow auto-merge and its ruleset must require the checks. Renovate merges nothing whose checks fail.
+- Majors wait on the Dependency Dashboard issue. Tick one there to open its PR.
+- PR titles are conventional commits. A runtime dependency (`dependencies` in `package.json`) gets `fix(deps):`, so semantic-release publishes a patch. Anything else gets `chore(deps):` and releases nothing. A grouped PR takes `fix` if any update in it does.
+- Node stays at 22: Renovate offers no later `node`, `@types/node`, or `@tsconfig/nodeNN`, and resolves lockfiles with Node 22. ESLint stays at 9.
+
+Check a change to the preset with `renovate-config-validator`, from a directory that holds a copy of it named `renovate.json`:
+
+```sh
+npx --package renovate -- renovate-config-validator --strict
+```
+
 ## Release a workflow change
 
 1. Merge the change to `main`.
