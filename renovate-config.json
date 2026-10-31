@@ -5,7 +5,8 @@
   "timezone": "America/Los_Angeles",
   "platformAutomerge": true,
   "constraints": {
-    "node": "22"
+    "node": "22",
+    "mise": ">=2026.10.21"
   },
   "lockFileMaintenance": {
     "enabled": true,
