@@ -37,9 +37,18 @@ jobs:
         id: before
         run: echo "tag=$(git describe --tags --abbrev=0 --match 'v*' || true)" >> "$GITHUB_OUTPUT"
       # The comment and label options are off, so the job needs no issues or pull-requests permission,
-      # and no `released` label is created.
+      # and no `released` label is created. semantic-release and its default plugins are pinned to exact
+      # versions, so a new release of any of them can't run with this job's rights until Renovate
+      # bumps it here.
       - name: Release
-        run: npx --yes semantic-release@25 --no-success-comment --no-fail-comment --no-released-labels
+        run: >-
+          npx --yes
+          --package semantic-release@25.0.9
+          --package @semantic-release/commit-analyzer@13.0.1
+          --package @semantic-release/release-notes-generator@14.1.1
+          --package @semantic-release/npm@13.2.0
+          --package @semantic-release/github@12.0.10
+          -- semantic-release --no-success-comment --no-fail-comment --no-released-labels
         env:
           GITHUB_TOKEN: ${{ github.token }}
       # The version output stays empty when the run released nothing.

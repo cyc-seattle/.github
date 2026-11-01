@@ -55,7 +55,7 @@ Only `pr-title.yml` listens for `edited`, so editing a PR's title or description
 
 ## Release an npm package from a repo
 
-Every merge to `main` runs [semantic-release](https://github.com/semantic-release/semantic-release). It reads the conventional commits since the last `vX.Y.Z` tag and picks the bump:
+Every merge to `main` runs [semantic-release](https://github.com/semantic-release/semantic-release) once CI passes. It reads the conventional commits since the last `vX.Y.Z` tag and picks the bump:
 
 | Commit            | Release |
 | ----------------- | ------- |
@@ -68,46 +68,48 @@ Then it publishes to npm with trusted publishing, tags the commit, and creates a
 
 The repo must hold one package. Its `package.json` holds `"version": "0.0.0-development"`. The git tags and npm hold the real version, and nothing is committed back.
 
-Add `.github/workflows/release.yml` to the repo:
+Add a `release` job to the repo's `.github/workflows/pull-request.yml`, after `ci`:
 
 ```yaml
-name: release
-
-on:
-  push:
-    branches: [main]
-
-permissions:
-  contents: write
-  id-token: write
-
 jobs:
+  ci:
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.0.0
+  # Releases only from main, and only once CI passes.
   release:
+    needs: ci
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     uses: cyc-seattle/.github/.github/workflows/release.yml@v2.0.0
+    permissions:
+      contents: write
+      id-token: write
 ```
 
-The caller must grant both permissions:
+The job lives in the same workflow as CI so it can wait on it with `needs`. A repo that deploys waits on its dev deploy instead, for example `needs: dev`. A failed CI or deploy skips the release. To retry a release that failed before it tagged, run `pull-request` on `main` from the Actions tab: `workflow_dispatch` runs CI again, then the release.
+
+The job must grant both permissions. The rest of the workflow keeps `contents: read`.
 
 | Permission        | Used to                                     |
 | ----------------- | ------------------------------------------- |
 | `contents: write` | Push the tag, and create the GitHub release |
 | `id-token: write` | Publish to npm with trusted publishing      |
 
+semantic-release and its four default plugins run at exact versions, set in `release.yml`. Renovate bumps them in this repo.
+
 ### Publish a container image
 
 Pass `image` to also publish a container image when a run releases a new version. The run builds `linux/amd64` and pushes `<image>:<version>` and `<image>:latest` to GHCR. The version has no `v`. A run that releases nothing pushes nothing. The release runs first, so a failed build leaves the tag in place. The image is built inside `release.yml` because a tag pushed with `GITHUB_TOKEN` starts no other workflow.
 
 ```yaml
-permissions:
-  contents: write
-  id-token: write
-  packages: write
-
-jobs:
-  release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.2.0
-    with:
-      image: ghcr.io/cyc-seattle/clubspot-fake
+release:
+  needs: ci
+  if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+  uses: cyc-seattle/.github/.github/workflows/release.yml@v2.2.0
+  permissions:
+    contents: write
+    id-token: write
+    packages: write
+  with:
+    image: ghcr.io/cyc-seattle/clubspot-fake
 ```
 
 | Input           | Does                                                                |
@@ -122,7 +124,7 @@ The image is built by a separate `image` job, so only callers that pass `image` 
 
 1. Publish the first version by hand, for example `0.1.0`. npm trusted publishing needs a package that already exists.
 2. Tag the commit you published from with that version, for example `v0.1.0`, and push the tag. semantic-release counts from it.
-3. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `release.yml`. Do not name this repo.
+3. On npmjs.com, add a trusted publisher for the package. Name the repo and the caller's workflow file, `pull-request.yml`. Do not name this repo.
 
 ## Deploy from a repo
 

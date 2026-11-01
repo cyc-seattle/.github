@@ -1,1 +1,20 @@
-{ "extends": ["local>cyc-seattle/.github:renovate-config"] }
+{
+  "extends": ["local>cyc-seattle/.github:renovate-config"],
+  "customManagers": [
+    {
+      "description": "semantic-release and its plugins, pinned in release.yml's npx command.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/release\\.yml$/"],
+      "matchStrings": ["--package (?<depName>(?:@[a-z0-9-]+/)?[a-z0-9-]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Bump semantic-release and its plugins together.",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".github/workflows/release.yml"],
+      "groupName": "semantic-release"
+    }
+  ]
+}
