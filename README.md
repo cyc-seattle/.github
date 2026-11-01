@@ -155,7 +155,7 @@ The caller must grant `id-token: write` and `contents: read`. The job passes the
 
 The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting.
 
-So a branch's deploy can't replace a merge's waiting deploy, a `wait` job runs first on any branch but the default. It holds the deploy back while a run of the same workflow on the default branch is still going. A run that is waiting for a reviewer's approval doesn't count. It gives up after an hour and deploys anyway, with a warning. It reads the runs with the run's `GITHUB_TOKEN`, so grant `actions: read` as well:
+So a branch's deploy can't replace a merge's waiting deploy, a `wait` job runs first on any branch but the default. It holds the deploy back while a run of the same workflow on the default branch hasn't finished its deploy to the same environment, including a run still on the jobs before it. Later jobs in that run don't count, so a prod deploy waiting for approval doesn't hold up dev. It finds the deploy by its job name, `deploy to <environment>`, so a check reads, for example, `dev / deploy to dev`. It checks every minute, gives up after an hour, and then deploys anyway, with a warning. It reads the runs with the run's `GITHUB_TOKEN`, so grant `actions: read` as well:
 
 ```yaml
 permissions:

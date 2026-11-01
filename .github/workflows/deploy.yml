@@ -26,8 +26,9 @@ on:
 
 jobs:
   # GitHub keeps one waiting job per concurrency group, and a new one cancels it. So a branch's deploy
-  # stays out of the group while the default branch's run of the same workflow is busy, and can't
-  # cancel a merge's deploy (cyc-seattle/platform#69). A run waiting for approval doesn't count.
+  # stays out of the group while a default branch run of the same workflow hasn't finished its deploy to
+  # this environment, and can't cancel a merge's deploy (cyc-seattle/platform#69). It finds that deploy
+  # by its job name, so a run's later deploys, such as one waiting for prod approval, don't hold it back.
   # No permissions block, so the job gets the caller's: without `actions: read` it warns and goes on.
   wait:
     name: wait
@@ -35,36 +36,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - name: Wait for the default branch's run
+      - name: Wait for the default branch's deploy
         shell: bash
         run: |
           if ! workflow=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .workflow_id); then
             echo "::warning::Can't read Actions runs, so this deploy doesn't wait for $BRANCH's. Grant the job actions: read."
             exit 0
           fi
+          # A run whose deploy job doesn't exist yet is still running what comes before it, so it counts.
+          # shellcheck disable=SC2016 # $ENV is jq's, not the shell's.
+          deploy_busy='[.jobs[] | select(.name == $ENV.JOB or (.name | endswith(" / " + $ENV.JOB)))]
+            | length == 0 or any(.status != "completed")'
           deadline=$((SECONDS + 3600))
           while true; do
-            if ! busy=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?branch=$BRANCH&per_page=20" \
-              --jq '[.workflow_runs[] | select(.event != "pull_request" and .status != "completed" and .status != "waiting") | .html_url] | join(" ")'); then
+            if ! runs=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?branch=$BRANCH&per_page=20" \
+              --jq '.workflow_runs[] | select(.event != "pull_request" and .status != "completed") | .id'); then
               echo "::warning::Can't list $BRANCH's runs, so this deploy doesn't wait for them."
               exit 0
             fi
+            busy=""
+            for id in $runs; do
+              if ! b=$(gh api "repos/$REPO/actions/runs/$id/jobs?filter=latest&per_page=100" --jq "$deploy_busy"); then
+                echo "::warning::Can't list the jobs of $BRANCH's run $id, so this deploy doesn't wait for them."
+                exit 0
+              fi
+              [[ "$b" == true ]] && busy+=" $SERVER/$REPO/actions/runs/$id"
+            done
             [[ -z "$busy" ]] && exit 0
             if ((SECONDS >= deadline)); then
-              echo "::warning::$BRANCH's run is still busy after an hour, so this deploy goes ahead: $busy"
+              echo "::warning::$BRANCH's deploy to $ENVIRONMENT is still busy after an hour, so this deploy goes ahead:$busy"
               exit 0
             fi
-            echo "Waiting for $busy"
-            sleep 30
+            echo "Waiting for$busy"
+            sleep 60
           done
         env:
           GH_TOKEN: ${{ github.token }}
+          SERVER: ${{ github.server_url }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           BRANCH: ${{ github.event.repository.default_branch }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          JOB: deploy to ${{ inputs.environment }}
 
   deploy:
-    name: deploy
+    # wait finds the job by this name.
+    name: deploy to ${{ inputs.environment }}
     needs: wait
     # The default branch skips wait.
     if: ${{ !cancelled() && (needs.wait.result == 'success' || needs.wait.result == 'skipped') }}
