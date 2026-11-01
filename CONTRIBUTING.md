@@ -26,7 +26,7 @@ CI runs `mise run ci`. Run it before you open a PR.
 
 Who can open a PR depends on the repo:
 
-- **App repos** (`isthmia`): only named contributors with write access. Open the PR from a branch in the repo, not from a fork. Their CI uses secrets, and GitHub gives a fork no secrets.
+- **App repos** (`platform`, `isthmia`): only named contributors with write access. Open the PR from a branch in the repo, not from a fork. Their CI uses secrets, and GitHub gives a fork no secrets.
 - **Library and org repos**: anyone. Open the PR from a fork.
 
 PRs merge by squash.

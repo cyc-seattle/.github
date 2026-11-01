@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   ci:
-    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.0.0
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.4.0
 ```
 
 `.github/workflows/pr-title.yml` checks the PR title:
@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   pr-title:
-    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.0.0
+    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.4.0
 ```
 
 - `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. The install gets the run's `GITHUB_TOKEN`, so Pulumi's plugin downloads are authenticated. Its status check is `ci / ci`.
@@ -83,7 +83,7 @@ permissions:
 
 jobs:
   release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.0.0
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.4.0
 ```
 
 The caller must grant both permissions:
@@ -105,7 +105,7 @@ permissions:
 
 jobs:
   release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.2.0
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.4.0
     with:
       image: ghcr.io/cyc-seattle/clubspot-fake
 ```
@@ -132,7 +132,7 @@ The image is built by a separate `image` job, so only callers that pass `image` 
 jobs:
   dev:
     needs: ci
-    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.1.0
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.4.0
     permissions:
       id-token: write
       contents: read
@@ -279,5 +279,6 @@ npx --package renovate -- renovate-config-validator --strict
 
 1. Merge the change to `main`.
 2. Create an immutable tag `vX.Y.Z` that follows semantic versioning.
+3. Bump the `@vX.Y.Z` in this README's examples to the new tag.
 
 Renovate bumps the tag in each caller. Community files and the Renovate preset come from the default branch and need no tag.
