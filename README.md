@@ -155,6 +155,28 @@ The caller must grant `id-token: write` and `contents: read`. The job passes the
 
 The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting.
 
+So a branch's deploy can't replace a merge's waiting deploy, a `wait` job runs first on any branch but the default. It holds the deploy back while a run of the same workflow on the default branch is still going. A run that is waiting for a reviewer's approval doesn't count. It gives up after an hour and deploys anyway, with a warning. It reads the runs with the run's `GITHUB_TOKEN`, so grant `actions: read` as well:
+
+```yaml
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+```
+
+Without `actions: read`, it warns and deploys without waiting. Two branches can still replace each other's waiting deploy. A short race is left too: a merge that lands in the seconds between a branch's check and its deploy joining the queue can still be replaced. To catch that, fail the default branch's run when its deploy is cancelled:
+
+```yaml
+deploy-cancelled:
+  needs: dev
+  if: always() && github.event_name == 'push' && needs.dev.result == 'cancelled'
+  runs-on: ubuntu-latest
+  steps:
+    - run: |
+        echo "::error::The dev deploy was cancelled, so prod was skipped. Rerun this workflow."
+        exit 1
+```
+
 The environment must hold these variables:
 
 | Variable                         | Holds                                             |
