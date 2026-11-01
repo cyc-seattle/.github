@@ -51,7 +51,7 @@ jobs:
 - `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. The install gets the run's `GITHUB_TOKEN`, so Pulumi's plugin downloads are authenticated. Its status check is `ci / ci`.
 - `pr-title` checks that the PR title is a conventional commit, with [`amannn/action-semantic-pull-request`](https://github.com/amannn/action-semantic-pull-request). It runs only on pull requests. Its status check is `pr-title / pr-title`.
 
-Only `pr-title.yml` listens for `edited`, so editing a PR's title or description reruns the title check and nothing else. Keep the job IDs `ci` and `pr-title`, because they name the status checks. Require both checks in the repo's ruleset.
+Only `pr-title.yml` listens for `edited`, so editing a PR's title or description reruns the title check and nothing else. Keep the job IDs `ci` and `pr-title`, because they name the status checks. Require both checks in the repo's ruleset. A repo with a merge queue also runs both on `merge_group`, so the queue sees the same checks.
 
 ## Release an npm package from a repo
 
@@ -84,7 +84,7 @@ jobs:
       id-token: write
 ```
 
-The job lives in the same workflow as CI so it can wait on it with `needs`. A repo that deploys waits on its dev deploy instead, for example `needs: dev`. A failed CI or deploy skips the release. To retry a release that failed before it tagged, run `pull-request` on `main` from the Actions tab: `workflow_dispatch` runs CI again, then the release.
+The job lives in the same workflow as CI so it can wait on it with `needs`. A failed CI skips the release. A repo with a merge queue (see [below](#deploy-to-a-shared-dev-from-a-merge-queue)) has already run CI and its dev deploy on the commit in the queue, so its release runs on `main`'s push with no `needs`. To retry a release that failed before it tagged, run `pull-request` on `main` from the Actions tab: `workflow_dispatch` runs CI again, then the release.
 
 The job must grant both permissions. The rest of the workflow keeps `contents: read`.
 
@@ -155,29 +155,55 @@ jobs:
 
 The caller must grant `id-token: write` and `contents: read`. The job passes the run's `GITHUB_TOKEN` to every step, so Pulumi's plugin downloads from GitHub releases are authenticated and avoid the anonymous rate limit. It caches `~/.pulumi/plugins` between runs, keyed on `pnpm-lock.yaml` and `mise.lock`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
 
-The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting.
+The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting. Its check reads `<caller job> / deploy to <environment>`, for example `dev / deploy to dev`.
 
-So a branch's deploy can't replace a merge's waiting deploy, a `wait` job runs first on any branch but the default. It holds the deploy back while a run of the same workflow on the default branch hasn't finished its deploy to the same environment, including a run still on the jobs before it. Later jobs in that run don't count, so a prod deploy waiting for approval doesn't hold up dev. It finds the deploy by its job name, `deploy to <environment>`, so a check reads, for example, `dev / deploy to dev`. It checks every minute, gives up after an hour, and then deploys anyway, with a warning. It reads the runs with the run's `GITHUB_TOKEN`, so grant `actions: read` as well:
+### Deploy to a shared dev from a merge queue
 
-```yaml
-permissions:
-  id-token: write
-  contents: read
-  actions: read
-```
-
-Without `actions: read`, it warns and deploys without waiting. Two branches can still replace each other's waiting deploy. A short race is left too: a merge that lands in the seconds between a branch's check and its deploy joining the queue can still be replaced. To catch that, fail the default branch's run when its deploy is cancelled:
+When several branches deploy to one dev, a newer deploy replaces an older one that is still waiting, and PRs get cancelled. So deploy to dev only from the repo's merge queue, which tests one PR at a time, and not from a PR's push (cyc-seattle/platform#69). The queue tests the exact commit that lands on `main`, so `main`'s push goes straight to prod:
 
 ```yaml
-deploy-cancelled:
-  needs: dev
-  if: always() && github.event_name == 'push' && needs.dev.result == 'cancelled'
-  runs-on: ubuntu-latest
-  steps:
-    - run: |
-        echo "::error::The dev deploy was cancelled, so prod was skipped. Rerun this workflow."
-        exit 1
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  merge_group:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    if: github.event_name != 'push'
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v3.0.0
+  dev:
+    needs: ci
+    if: github.event_name == 'merge_group'
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v3.0.0
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      task: deploy
+      integration: true
+  # The check the queue requires. A skipped reusable workflow reports under another name, so this
+  # job always runs: on a PR it passes, and in the queue it passes only if dev did.
+  dev-passed:
+    needs: dev
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: '[[ "$EVENT" != merge_group || "$RESULT" == success ]]'
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          RESULT: ${{ needs.dev.result }}
+  prod-preview:
+    if: github.event_name == 'push'
+    # ...
 ```
+
+Then add `merge_group` to the PR title workflow's triggers too. The `pr-title` job skips itself there, and a skipped job passes. In the repo's ruleset, require `ci / ci`, `pr-title / pr-title`, and `dev-passed`, and turn on the merge queue with one entry built at a time. The queue waits only for required checks, so without `dev-passed` it would merge once CI passed.
+
+The `dev` environment must allow the queue's branches, `gh-readonly-queue/main/...`, so leave its branch rule off. The OIDC subject names the environment, not the branch, so Workload Identity needs no change.
 
 The environment must hold these variables:
 
