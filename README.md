@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   ci:
-    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.4.0
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v2.5.1
 ```
 
 `.github/workflows/pr-title.yml` checks the PR title:
@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   pr-title:
-    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.4.0
+    uses: cyc-seattle/.github/.github/workflows/pr-title.yml@v2.5.1
 ```
 
 - `ci` installs the tools from `mise.lock`, then runs `mise run install` and `mise run ci`. The install gets the run's `GITHUB_TOKEN`, so Pulumi's plugin downloads are authenticated. Its status check is `ci / ci`.
@@ -83,7 +83,7 @@ permissions:
 
 jobs:
   release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.4.0
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.5.1
 ```
 
 The caller must grant both permissions:
@@ -105,7 +105,7 @@ permissions:
 
 jobs:
   release:
-    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.4.0
+    uses: cyc-seattle/.github/.github/workflows/release.yml@v2.5.1
     with:
       image: ghcr.io/cyc-seattle/clubspot-fake
 ```
@@ -132,10 +132,11 @@ The image is built by a separate `image` job, so only callers that pass `image` 
 jobs:
   dev:
     needs: ci
-    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.4.0
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.5.1
     permissions:
       id-token: write
       contents: read
+      actions: read
     with:
       environment: dev
       task: deploy
@@ -210,14 +211,14 @@ For `task: preview`, the workflow has an output, `changes`: `'true'` if the prev
 
 ```yaml
 prod-preview:
-  uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.4.0
+  uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.5.1
   with:
     environment: prod-preview
     task: preview
 prod:
   needs: prod-preview
   if: needs.prod-preview.outputs.changes == 'true'
-  uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.4.0
+  uses: cyc-seattle/.github/.github/workflows/deploy.yml@v2.5.1
   with:
     environment: prod
     task: deploy
