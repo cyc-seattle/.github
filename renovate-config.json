@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigestsToSemver"],
   "semanticCommits": "enabled",
   "timezone": "America/Los_Angeles",
   "platformAutomerge": true,
@@ -22,6 +22,12 @@
       "groupSlug": "all-minor-patch",
       "schedule": ["* 0-5 * * 1"],
       "automerge": true
+    },
+    {
+      "description": "Keep the reusable workflows on their tags. The Workload Identity provider accepts deploy.yml only at a tag, and the tags are immutable.",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["cyc-seattle/.github"],
+      "pinDigests": false
     },
     {
       "description": "A major update opens only once a maintainer ticks it on the Dependency Dashboard, and never merges itself.",

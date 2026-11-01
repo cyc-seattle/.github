@@ -267,6 +267,7 @@ The preset decides what Renovate opens and what merges itself. Times are in `Ame
 - Automerge uses GitHub's native auto-merge, so the repo must allow auto-merge and its ruleset must require the checks. Renovate merges nothing whose checks fail.
 - Majors wait on the Dependency Dashboard issue. Tick one there to open its PR.
 - PR titles are conventional commits. A runtime dependency (`dependencies` in `package.json`) gets `fix(deps):`, so semantic-release publishes a patch. Anything else gets `chore(deps):` and releases nothing. A grouped PR takes `fix` if any update in it does.
+- Actions are pinned to a commit SHA, with the version in a comment, such as `actions/checkout@<sha> # v7.0.1`. A tag can be moved to other code; a SHA can't. Renovate pins any action that isn't pinned yet, and its digest updates keep the SHA and the comment current. The reusable workflows in this repo stay on their tags, because the Workload Identity provider accepts `deploy.yml` only at a tag.
 - Node stays at 22: Renovate offers no later `node`, `@types/node`, or `@tsconfig/nodeNN`, and resolves lockfiles with Node 22. ESLint stays at 9.
 
 Check a change to the preset with `renovate-config-validator`, from a directory that holds a copy of it named `renovate.json`:
