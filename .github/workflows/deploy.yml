@@ -25,8 +25,49 @@ on:
         value: ${{ jobs.deploy.outputs.changes }}
 
 jobs:
+  # GitHub keeps one waiting job per concurrency group, and a new one cancels it. So a branch's deploy
+  # stays out of the group while the default branch's run of the same workflow is busy, and can't
+  # cancel a merge's deploy (cyc-seattle/platform#69). A run waiting for approval doesn't count.
+  # No permissions block, so the job gets the caller's: without `actions: read` it warns and goes on.
+  wait:
+    name: wait
+    if: github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - name: Wait for the default branch's run
+        shell: bash
+        run: |
+          if ! workflow=$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq .workflow_id); then
+            echo "::warning::Can't read Actions runs, so this deploy doesn't wait for $BRANCH's. Grant the job actions: read."
+            exit 0
+          fi
+          deadline=$((SECONDS + 3600))
+          while true; do
+            if ! busy=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?branch=$BRANCH&per_page=20" \
+              --jq '[.workflow_runs[] | select(.event != "pull_request" and .status != "completed" and .status != "waiting") | .html_url] | join(" ")'); then
+              echo "::warning::Can't list $BRANCH's runs, so this deploy doesn't wait for them."
+              exit 0
+            fi
+            [[ -z "$busy" ]] && exit 0
+            if ((SECONDS >= deadline)); then
+              echo "::warning::$BRANCH's run is still busy after an hour, so this deploy goes ahead: $busy"
+              exit 0
+            fi
+            echo "Waiting for $busy"
+            sleep 30
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+
   deploy:
     name: deploy
+    needs: wait
+    # The default branch skips wait.
+    if: ${{ !cancelled() && (needs.wait.result == 'success' || needs.wait.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     outputs:
