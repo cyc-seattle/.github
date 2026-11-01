@@ -43,25 +43,30 @@ jobs:
             echo "::warning::Can't read Actions runs, so this deploy doesn't wait for $BRANCH's. Grant the job actions: read."
             exit 0
           fi
-          # A run whose deploy job doesn't exist yet is still running what comes before it, so it counts.
+          # A run whose deploy job doesn't exist yet counts while it is running or queued, since it is still on
+          # the jobs before it. A waiting or pending run without one doesn't: its own deploy, queued behind a
+          # branch's, would be a pending job. So a run from before v2.5.1, whose job has another name, can't hold
+          # every branch back while its prod deploy waits for approval.
           # shellcheck disable=SC2016 # $ENV is jq's, not the shell's.
           deploy_busy='[.jobs[] | select(.name == $ENV.JOB or (.name | endswith(" / " + $ENV.JOB)))]
-            | length == 0 or any(.status != "completed")'
+            | if length == 0 then $ENV.STATUS == "in_progress" or $ENV.STATUS == "queued"
+              else any(.status != "completed") end'
           deadline=$((SECONDS + 3600))
           while true; do
             if ! runs=$(gh api "repos/$REPO/actions/workflows/$workflow/runs?branch=$BRANCH&per_page=20" \
-              --jq '.workflow_runs[] | select(.event != "pull_request" and .status != "completed") | .id'); then
+              --jq '.workflow_runs[] | select(.event != "pull_request" and .status != "completed") | "\(.id) \(.status)"'); then
               echo "::warning::Can't list $BRANCH's runs, so this deploy doesn't wait for them."
               exit 0
             fi
             busy=""
-            for id in $runs; do
-              if ! b=$(gh api "repos/$REPO/actions/runs/$id/jobs?filter=latest&per_page=100" --jq "$deploy_busy"); then
+            while read -r id status; do
+              [[ -z "$id" ]] && continue
+              if ! b=$(STATUS="$status" gh api "repos/$REPO/actions/runs/$id/jobs?filter=latest&per_page=100" --jq "$deploy_busy"); then
                 echo "::warning::Can't list the jobs of $BRANCH's run $id, so this deploy doesn't wait for them."
                 exit 0
               fi
               [[ "$b" == true ]] && busy+=" $SERVER/$REPO/actions/runs/$id"
-            done
+            done <<<"$runs"
             [[ -z "$busy" ]] && exit 0
             if ((SECONDS >= deadline)); then
               echo "::warning::$BRANCH's deploy to $ENVIRONMENT is still busy after an hour, so this deploy goes ahead:$busy"
