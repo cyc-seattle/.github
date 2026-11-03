@@ -151,6 +151,8 @@ jobs:
 | `projects`    | The Pulumi projects to run on, separated by spaces. Defaults to empty, for all      |
 | `integration` | Runs `mise run integration` after the task. Defaults to false                       |
 
+When the integration tests fail, the job uploads the caller's `test-results/` as the `test-results-<environment>` artifact, kept 7 days, so a failed journey's page snapshot and trace can be read. A repo whose tests write elsewhere uploads nothing.
+
 `none` runs no task, but still checks out, authenticates, and installs, so `integration: true` runs the integration tests alone against what is already deployed. The task and the integration tests get `projects` as `DEPLOY_PROJECTS`. The caller's tasks pick what to run from it, and treat an empty value as their full list.
 
 The caller must grant `id-token: write` and `contents: read`. The job passes the run's `GITHUB_TOKEN` to every step, so Pulumi's plugin downloads from GitHub releases are authenticated and avoid the anonymous rate limit. It caches `~/.pulumi/plugins` between runs, keyed on `pnpm-lock.yaml` and `mise.lock`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
