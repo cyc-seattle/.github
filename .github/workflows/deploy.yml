@@ -107,3 +107,12 @@ jobs:
         run: mise run integration
         env:
           DEPLOY_PROJECTS: ${{ inputs.projects }}
+      # So a failed journey's page snapshot and trace can be read. Playwright writes them to test-results/.
+      - name: Upload test results
+        if: failure() && inputs.integration
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ inputs.environment }}
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
