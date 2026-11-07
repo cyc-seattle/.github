@@ -1,14 +1,19 @@
-# CYC Community Sailing Center
+# CYC Seattle
 
-CYC Community Sailing Center is a nonprofit in Seattle. Its volunteers write the code here, which runs the club's web app, sign-in, and the syncs between Clubspot, Google Workspace, and the club's database.
+Volunteers write the code here for two Seattle sailing nonprofits:
 
-## What the club runs
+- [CYC of Seattle](https://www.cycseattle.org/)
+- [CYC Community Sailing Center](https://www.cyccommunitysailing.org/)
 
-- [`sail-team`](https://github.com/cyc-seattle/sail-team): the club's web app at [cycsail.team](https://cycsail.team), with plans, the roster, and links.
-- [`platform`](https://github.com/cyc-seattle/platform): the shared Google Cloud setup, the club's database (Directus), and the jobs that sync it with Clubspot and Google Workspace.
-- [`isthmia`](https://github.com/cyc-seattle/isthmia): sign-in for staff and families, and the older links portal that `sail-team` is replacing.
+It runs the web app, sign-in, and the syncs between Clubspot, Google Workspace, and the database.
+
+## What runs today
+
+- [`sail-team`](https://github.com/cyc-seattle/sail-team): the web app at [cycsail.team](https://cycsail.team), with plans, the roster, and links.
+- [`platform`](https://github.com/cyc-seattle/platform): the shared Google Cloud setup, the database (Directus), sign-in (Authentik), and the jobs that sync it with Clubspot and Google Workspace.
+- [`isthmia`](https://github.com/cyc-seattle/isthmia): the older links portal, which `sail-team` is replacing. Sign-in has moved to `platform`.
 - [`gam`](https://github.com/cyc-seattle/gam): backup scripts for managing Google Workspace groups by hand when the sync breaks.
-- [`awards`](https://github.com/cyc-seattle/awards): source files for the club's trophies and awards.
+- [`awards`](https://github.com/cyc-seattle/awards): source files for CYC's and the Sailing Center's trophies and awards.
 
 ## Shared code and setup
 
