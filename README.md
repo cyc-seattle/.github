@@ -157,11 +157,11 @@ When the integration tests fail, the job uploads the caller's `test-results/` as
 
 The caller must grant `id-token: write` and `contents: read`. The job passes the run's `GITHUB_TOKEN` to every step, so Pulumi's plugin downloads from GitHub releases are authenticated and avoid the anonymous rate limit. It caches `~/.pulumi/plugins` between runs, keyed on `pnpm-lock.yaml` and `mise.lock`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
 
-The job runs one at a time for each repo and environment, and never cancels one in progress. A third deploy to the same environment replaces a second that is still waiting. Its check reads `<caller job> / deploy to <environment>`, for example `dev / deploy to dev`.
+The job runs one at a time for each repo and environment, and never cancels one in progress. Deploys to `dev` wait in line. For any other environment, a third deploy replaces a second that is still waiting. Its check reads `<caller job> / deploy to <environment>`, for example `dev / deploy to dev`.
 
 ### Deploy to a shared dev from a merge queue
 
-When several branches deploy to one dev, a newer deploy replaces an older one that is still waiting, and PRs get cancelled. So deploy to dev only from the repo's merge queue, which tests one PR at a time, and not from a PR's push (cyc-seattle/platform#69). The queue tests the exact commit that lands on `main`, so `main`'s push goes straight to prod:
+When several branches deploy to one dev, they overwrite each other's deploys. So deploy to dev only from the repo's merge queue, and not from a PR's push (cyc-seattle/platform#69). The queue tests the exact commit that lands on `main`, so `main`'s push goes straight to prod:
 
 ```yaml
 on:
@@ -203,7 +203,9 @@ jobs:
     # ...
 ```
 
-Then add `merge_group` to the PR title workflow's triggers too. The `pr-title` job skips itself there, and a skipped job passes. In the repo's ruleset, require `ci / ci`, `pr-title / pr-title`, and `dev-passed`, and turn on the merge queue with one entry built at a time. The queue waits only for required checks, so without `dev-passed` it would merge once CI passed.
+Then add `merge_group` to the PR title workflow's triggers too. The `pr-title` job skips itself there, and a skipped job passes. In the repo's ruleset, require `ci / ci`, `pr-title / pr-title`, and `dev-passed`. The queue waits only for required checks, so without `dev-passed` it would merge once CI passed.
+
+The queue tests PRs in batches. Turn it on with up to 100 entries built and merged at a time, no wait time, and "Only merge non-failing pull requests" off (`HEADGREEN`). Each queued PR gets a run, and the queue's commit for a PR contains every PR ahead of it. A PR queued alone deploys at once. PRs queued while it runs wait in line. When a PR's run reaches the front, it skips the deploy if a newer PR is queued behind it, because that PR's run tests both. Under `HEADGREEN`, when the newest PR passes, the queue merges the whole batch in one push, so prod deploys once. If the newest PR fails, the queue removes it, and the PR just ahead of it deploys what's left of the batch. If that fails too, the queue removes that PR, and so on back through the batch. The queue itself doesn't bisect, so give its check timeout room for a few runs in a row.
 
 The `dev` environment must allow the queue's branches, `gh-readonly-queue/main/...`, so leave its branch rule off. The OIDC subject names the environment, not the branch, so Workload Identity needs no change.
 
