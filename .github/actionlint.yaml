@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/deploy.yml:
+    ignore:
+      # actionlint doesn't know `concurrency.queue` yet (rhysd/actionlint#654).
+      - 'unexpected key "queue" for "concurrency" section'
