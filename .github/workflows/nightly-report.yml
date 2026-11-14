@@ -49,7 +49,9 @@ jobs:
             echo
             echo "Run: $run_url"
             echo
-            if [[ -n "$failures" ]]; then
+            if [[ "$RESULT" == cancelled ]]; then
+              echo "It was cancelled before it finished, so dev wasn't fully tested."
+            elif [[ -n "$failures" ]]; then
               echo "Failing scenarios:"
               echo
               echo '```'
