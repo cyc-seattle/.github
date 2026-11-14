@@ -65,6 +65,10 @@ jobs:
       # Pulumi authenticates its plugin downloads from GitHub releases with this, which avoids the anonymous rate limit.
       GITHUB_TOKEN: ${{ github.token }}
       RETRY: false
+      # Where dev's lock lives.
+      DEV_CLUSTER: cyc
+      DEV_LOCATION: us-west1
+      DEV_NAMESPACE: dev
     steps: &steps
       - name: Check the task
         shell: bash
@@ -125,6 +129,54 @@ jobs:
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - if: steps.gate.outputs.deploy == 'true'
         run: mise run install
+      # Every repo deploys to and tests against the same dev, and a concurrency group can't span repos
+      # (#34). So dev's runs take turns through a ConfigMap in its namespace: creating it is atomic,
+      # and a run that dies without releasing it leaves it to expire.
+      - name: Wait for dev's lock
+        id: lock
+        if: steps.gate.outputs.deploy == 'true' && inputs.environment == 'dev'
+        timeout-minutes: 120
+        shell: bash
+        run: |
+          cluster="$(gcloud container clusters describe "$DEV_CLUSTER" --location "$DEV_LOCATION" \
+            --format='value(endpoint,masterAuth.clusterCaCertificate)')"
+          url="https://${cluster%%[[:space:]]*}/api/v1/namespaces/$DEV_NAMESPACE/configmaps"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          base64 -d <<< "${cluster##*[[:space:]]}" > "$RUNNER_TEMP/dev-ca.crt"
+          kube() {
+            curl -sS --cacert "$RUNNER_TEMP/dev-ca.crt" -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H 'Content-Type: application/json' -o "$RUNNER_TEMP/lock.json" -w '%{http_code}' "$@"
+          }
+          holder="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          while true; do
+            body="$(jq -n --arg holder "$holder" --arg expires "$(($(date +%s) + LOCK_MINUTES * 60))" --arg rv "${rv:-}" \
+              '{apiVersion: "v1", kind: "ConfigMap", metadata: ({name: "dev-lock"} + if $rv == "" then {} else {resourceVersion: $rv} end), data: {holder: $holder, expires: $expires}}')"
+            if [[ -z "${rv:-}" ]]; then
+              status="$(kube -X POST --data "$body" "$url")" || status=000
+            else
+              status="$(kube -X PUT --data "$body" "$url/dev-lock")" || status=000
+            fi
+            rv=
+            if [[ "$status" == 200 || "$status" == 201 ]]; then
+              echo "This run holds dev's lock."
+              exit 0
+            fi
+            # 409 means another run holds it, or took it first. Anything else is retried too.
+            status="$(kube "$url/dev-lock")" || status=000
+            if [[ "$status" == 200 ]]; then
+              if (($(jq -r .data.expires "$RUNNER_TEMP/lock.json") < $(date +%s))); then
+                echo "::warning::$(jq -r .data.holder "$RUNNER_TEMP/lock.json") held dev's lock past its expiry, so this run takes it."
+                rv="$(jq -r .metadata.resourceVersion "$RUNNER_TEMP/lock.json")"
+                continue
+              fi
+              echo "Waiting for $(jq -r .data.holder "$RUNNER_TEMP/lock.json") to finish with dev."
+            elif [[ "$status" != 404 ]]; then
+              echo "::warning::Reading dev's lock returned $status."
+            fi
+            sleep 30
+          done
+        env:
+          LOCK_MINUTES: 75
       # The fence keeps Markdown from folding the preview into one paragraph. pipefail comes from `shell: bash`.
       - name: Run the task
         id: task
@@ -167,6 +219,29 @@ jobs:
         run: mise run integration
         env:
           DEPLOY_PROJECTS: ${{ inputs.projects }}
+      # Releases only its own lock: one held past its expiry may belong to another run by now. The
+      # resourceVersion stops a delete racing a run that took it over.
+      - name: Release dev's lock
+        if: always() && steps.lock.conclusion == 'success'
+        # A lock left behind expires, so failing to release it mustn't fail a run that passed.
+        continue-on-error: true
+        shell: bash
+        run: |
+          kube() {
+            curl -sS --cacert "$RUNNER_TEMP/dev-ca.crt" -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H 'Content-Type: application/json' -o "$RUNNER_TEMP/lock.json" -w '%{http_code}' "$@"
+          }
+          holder="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          status="$(kube "$URL/dev-lock")"
+          if [[ "$status" != 200 || "$(jq -r .data.holder "$RUNNER_TEMP/lock.json")" != "$holder" ]]; then
+            echo "::warning::This run no longer holds dev's lock."
+            exit 0
+          fi
+          rv="$(jq -r .metadata.resourceVersion "$RUNNER_TEMP/lock.json")"
+          status="$(kube -X DELETE --data "{\"preconditions\":{\"resourceVersion\":\"$rv\"}}" "$URL/dev-lock")"
+          [[ "$status" == 200 ]] || { echo "::warning::Releasing dev's lock returned $status, so it waits out its expiry."; cat "$RUNNER_TEMP/lock.json"; }
+        env:
+          URL: ${{ steps.lock.outputs.url }}
       # So a failed journey's page snapshot and trace can be read. Playwright writes them to test-results/.
       - name: Upload test results
         if: failure() && inputs.integration
@@ -234,4 +309,7 @@ jobs:
       PULUMI_STACK: ${{ inputs.environment == 'dev' && 'dev' || 'prod' }}
       GITHUB_TOKEN: ${{ github.token }}
       RETRY: true
+      DEV_CLUSTER: cyc
+      DEV_LOCATION: us-west1
+      DEV_NAMESPACE: dev
     steps: *steps
