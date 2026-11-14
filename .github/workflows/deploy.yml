@@ -31,15 +31,17 @@ env:
     query($owner: String!, $name: String!, $branch: String!) {
       repository(owner: $owner, name: $name) {
         mergeQueue(branch: $branch) {
-          entries(first: 100) { nodes { position pullRequest { number } headCommit { oid } } }
+          entries(first: 100) { nodes { position state pullRequest { number } headCommit { oid } } }
         }
       }
     }
+  # An UNMERGEABLE entry, one that conflicts, never starts a run, so it can't test this one. The
+  # wait job re-reads this each minute, so a newer entry that turns UNMERGEABLE makes this one last.
   QUEUE_STATE: >-
     (map(select(.pullRequest.number == $pr)) | first) as $me
     | if $me == null then "gone"
       elif $me.headCommit.oid != $sha then "stale"
-      elif any(.[]; .position > $me.position) then "newer"
+      elif any(.[]; .position > $me.position and .state != "UNMERGEABLE") then "newer"
       else "last" end
 
 jobs:
