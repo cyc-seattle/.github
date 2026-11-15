@@ -153,13 +153,125 @@ jobs:
 
 When the integration tests fail, the job uploads the caller's `test-results/` as the `test-results-<environment>` artifact, kept 7 days, so a failed journey's page snapshot and trace can be read. A repo whose tests write elsewhere uploads nothing.
 
-`none` runs no task, but still checks out, authenticates, and installs, so `integration: true` runs the integration tests alone against what is already deployed. The task and the integration tests get `projects` as `DEPLOY_PROJECTS`. The caller's tasks pick what to run from it, and treat an empty value as their full list.
+`none` runs no task, but still checks out, authenticates, and installs, so `integration: true` runs the integration tests alone against what is already deployed. On dev it lets deploys go first, and tests the commit last deployed there (see [below](#test-dev-after-each-deploy)). The task and the integration tests get `projects` as `DEPLOY_PROJECTS`. The caller's tasks pick what to run from it, and treat an empty value as their full list.
 
 The caller must grant `id-token: write` and `contents: read`. The job passes the run's `GITHUB_TOKEN` to every step, so Pulumi's plugin downloads from GitHub releases are authenticated and avoid the anonymous rate limit. It caches `~/.pulumi/plugins` between runs, keyed on `pnpm-lock.yaml` and `mise.lock`. The job uses the environment's own approval rules and branch rules, so a `prod` environment that requires a reviewer pauses the job until someone approves.
 
-The job runs one at a time for each repo and environment, and never cancels one in progress. Deploys to `dev` wait in line. For any other environment, a third deploy replaces a second that is still waiting. Its check reads `<caller job> / deploy to <environment>`, for example `dev / deploy to dev`.
+The job runs one at a time for each repo and environment, and never cancels one in progress. Deploys to `dev` wait in line. Test runs (`task: none`) have a group of their own. For any other environment, a third deploy replaces a second that is still waiting. Its check reads `<caller job> / deploy to <environment>`, for example `dev / deploy to dev`.
+
+### Test dev after each deploy
+
+`main` deploys to dev on each push, then previews and deploys prod, and a separate workflow runs the integration tests against dev after each deploy. A test run takes 12–18 minutes, so it stays out of the deploy's way: deploys go ahead of a waiting test run, and prod never waits behind one. Merges during a run collapse into one run of the newest `main`. Only `main` deploys to dev, so leave the `dev` environment's branch rule on `main`.
+
+`.github/workflows/pull-request.yml`:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  # Retries main's deploys.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    if: github.event_name == 'pull_request'
+    uses: cyc-seattle/.github/.github/workflows/ci.yml@v3.4.0
+  dev:
+    if: github.ref == 'refs/heads/main'
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v3.4.0
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      task: deploy
+  # A run started with GITHUB_TOKEN may start only a workflow_dispatch, so the tests run in a
+  # workflow of their own, which keeps them out of this run.
+  integration:
+    needs: dev
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: gh workflow run integration.yml -R "$GITHUB_REPOSITORY" --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
+  prod-preview:
+    needs: dev
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v3.4.0
+    # ...
+  prod:
+    needs: prod-preview
+    if: needs.prod-preview.outputs.changes == 'true'
+    # ...
+```
+
+`.github/workflows/integration.yml`:
+
+```yaml
+name: integration
+
+on:
+  workflow_dispatch:
+
+# One run at a time, and at most one waiting. A newer run replaces one that's waiting.
+concurrency:
+  group: integration
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dev:
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v3.4.0
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      task: none
+      integration: true
+  report:
+    needs: dev
+    if: always() && needs.dev.outputs.skipped != 'true'
+    uses: cyc-seattle/.github/.github/workflows/nightly-report.yml@v3.4.0
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    with:
+      result: ${{ needs.dev.result }}
+      assignee: <maintainer>
+      title: Integration tests failed on dev
+      tested: ${{ needs.dev.outputs.tested }}
+      passed: ${{ needs.dev.outputs.passed }}
+```
+
+On dev, `task: none` changes how the run takes dev's lock and what it tests:
+
+- **Deploys go first.** A deploy run waiting for the lock keeps a key in the `dev-lock-deploys` ConfigMap, and refreshes it every 30 seconds with a 5-minute expiry. A test run takes the lock only while no deploy is waiting, and if one started waiting as it took it, it lets go. A running test is never stopped.
+- **It tests what's on dev.** Each dev deploy that succeeds records its commit as `deployed` in this repo's `dev-state-<owner>.<repo>` ConfigMap. Once a test run holds the lock, it checks out that commit, which may be newer than its own if a deploy went first, and installs again if it changed.
+- **It runs only when something new is on dev.** Each integration run on dev, including the nightly, records the commit it tested as `tested`, and as `passed` if the tests passed. A test run skips the tests when `deployed` is `tested`, and sets `skipped` to `true`. A re-run of the job runs them anyway.
+
+| Output    | Holds, for `task: none` on dev                                               |
+| --------- | ---------------------------------------------------------------------------- |
+| `tested`  | The commit the tests ran on. Empty if they didn't run                        |
+| `passed`  | The last commit the tests passed on, before this run. Empty if none recorded |
+| `skipped` | `true` if nothing was deployed since the tests last ran                      |
+
+The report keeps its own issue, apart from the nightly one, because the nightly tests every repo together. Given `tested` and `passed`, a failure's comment lists the commits merged between them, each with its PR's number, and links their diff. It needs `contents: read` for that.
+
+A test run has its own concurrency group, `integration-<repo>-<environment>`, apart from the repo's deploys, so it never holds up the repo's next deploy before dev's lock can put that deploy first.
 
 ### Deploy to a shared dev from a merge queue
+
+This is the older way, kept until every repo has moved to [testing after each deploy](#test-dev-after-each-deploy).
 
 When several branches deploy to one dev, they overwrite each other's deploys. So deploy to dev only from the repo's merge queue, and not from a PR's push (cyc-seattle/platform#69). The queue tests the exact commit that lands on `main`, so `main`'s push goes straight to prod:
 
@@ -207,7 +319,7 @@ Then add `merge_group` to the PR title workflow's triggers too. The `pr-title` j
 
 The queue tests PRs in batches. Turn it on with up to 100 entries built and merged at a time, no wait time, and "Only merge non-failing pull requests" off (`HEADGREEN`). Each queued PR gets a run, and the queue's commit for a PR contains every PR ahead of it. A PR queued alone deploys at once. PRs queued while it runs wait in line. When a PR's run reaches the front, it skips the deploy if a newer PR is queued behind it, because that PR's run tests both. Under `HEADGREEN`, when the newest PR passes, the queue merges the whole batch in one push, so prod deploys once. If the newest PR fails, the queue removes it, and the PR just ahead of it deploys what's left of the batch. If that fails too, the queue removes that PR, and so on back through the batch. The queue itself doesn't bisect, so give its check timeout room for a few runs in a row.
 
-Every repo deploys to the same dev, and a concurrency group works only inside one repo. So a `dev` run also waits for dev's lock, a ConfigMap named `dev-lock` in the `dev` namespace of the `cyc` cluster, before its task, and holds it through the integration tests. It names the run that holds it. A run that dies without releasing it leaves it to expire after 75 minutes, and the next run takes it over. To free it sooner, delete the ConfigMap once that run has stopped. The service account needs `container.clusters.get` and write access to ConfigMaps in that namespace.
+Every repo deploys to the same dev, and a concurrency group works only inside one repo. So a `dev` run also waits for dev's lock, a ConfigMap named `dev-lock` in the `dev` namespace of the `cyc` cluster, before its task, and holds it through the integration tests. A test run lets any waiting deploy go first. It names the run that holds it. A run that dies without releasing it leaves it to expire after 75 minutes, and the next run takes it over. To free it sooner, delete the ConfigMap once that run has stopped. The service account needs `container.clusters.get` and write access to ConfigMaps in that namespace.
 
 The `dev` environment must allow the queue's branches, `gh-readonly-queue/main/...`, so leave its branch rule off. The OIDC subject names the environment, not the branch, so Workload Identity needs no change.
 
@@ -318,7 +430,7 @@ jobs:
 ```
 
 It finds the failing scenarios in the failed jobs' logs, from vitest's `FAIL` lines and Playwright's numbered ones.
-The issue's title defaults to `Nightly integration run failed`, and is how the workflow finds it again.
+The issue's title defaults to `Nightly integration run failed`, and is how the workflow finds it again. The report takes the caller's permissions.
 
 ## Update dependencies with Renovate
 
