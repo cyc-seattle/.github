@@ -40,7 +40,10 @@ jobs:
           # vitest prints `FAIL  <file> > <scenario>`, and Playwright `1) <file> › <scenario>`. Retries repeat them.
           failures="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --paginate \
             --jq '.jobs[] | select(.conclusion == "failure") | .id' |
-            while read -r job; do gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" || true; done |
+            while read -r job; do
+              # Not `gh api`: newer gh refuses to print output that holds terminal escapes, as test logs do.
+              curl -sSfL -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" || true
+            done |
             sed -E 's/^[^ ]+ //; s/(\x1b|\^\[)\[[0-9;]*m//g' |
             grep -E '^\s*(FAIL\s|[0-9]+\) )' | sed -E 's/^\s*([0-9]+\) )?//; s/^FAIL\s+//' |
             awk '!seen[$0]++' | head -n 50 || true)"
