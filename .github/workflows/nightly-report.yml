@@ -15,26 +15,49 @@ on:
         description: The issue's title. The workflow finds its open issue by it.
         type: string
         default: Nightly integration run failed
+      tested:
+        description: The commit the tests ran on, such as deploy.yml's `tested`. With `passed`, a failure lists the PRs between them.
+        type: string
+        default: ""
+      passed:
+        description: The last commit the tests passed on, such as deploy.yml's `passed`.
+        type: string
+        default: ""
 
 jobs:
   report:
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      issues: write
+    # Takes the caller's permissions: `actions: read` and `issues: write`, and `contents: read` to list
+    # the PRs from `tested`. Asking for contents here would break callers that don't grant it.
     steps:
-      # One open issue per repo: a failed night opens it or adds to it, and a green night closes it.
+      # One open issue per repo and title: a failed run opens it or adds to it, and a green run closes it.
       - shell: bash
         run: |
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           issue="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" \
             --json number,title --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")"
 
+          if [[ -n "$TESTED" ]]; then
+            what="The integration tests ran on dev at $TESTED."
+            passed_what="The integration tests passed on dev at $TESTED"
+          else
+            what="The nightly run deployed \`main\` to dev and ran the integration tests."
+            passed_what="The nightly run passed"
+          fi
+
           if [[ "$RESULT" == success ]]; then
             if [[ -n "$issue" ]]; then
-              gh issue close "$issue" -R "$GITHUB_REPOSITORY" --comment "The nightly run passed: $run_url"
+              gh issue close "$issue" -R "$GITHUB_REPOSITORY" --comment "$passed_what: $run_url"
             fi
             exit 0
+          fi
+
+          # A squash merge's subject ends with its PR's number, which GitHub links in the comment.
+          prs=""
+          if [[ -n "$TESTED" && -n "$PASSED" ]]; then
+            prs="$(gh api "repos/$GITHUB_REPOSITORY/compare/$PASSED...$TESTED" \
+              --jq '.commits[] | "- " + (.commit.message | split("\n") | first)')" ||
+              prs="- The commits couldn't be listed. Does the caller grant \`contents: read\`?"
           fi
 
           # vitest prints `FAIL  <file> > <scenario>`, and Playwright `1) <file> › <scenario>`. Retries repeat them.
@@ -48,9 +71,23 @@ jobs:
             grep -E '^\s*(FAIL\s|[0-9]+\) )' | sed -E 's/^\s*([0-9]+\) )?//; s/^FAIL\s+//' |
             awk '!seen[$0]++' | head -n 50 || true)"
           {
-            echo "The nightly run deployed \`main\` to dev and ran the integration tests. Its result was \`$RESULT\`."
+            echo "$what Its result was \`$RESULT\`."
             echo
             echo "Run: $run_url"
+            if [[ -n "$TESTED" ]]; then
+              echo
+              if [[ -z "$PASSED" ]]; then
+                echo "No green run is recorded, so the PRs since one aren't known."
+              elif [[ -n "$prs" ]]; then
+                echo "Merged since the last green run, at $PASSED:"
+                echo
+                echo "$prs"
+                echo
+                echo "Diff: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$PASSED...$TESTED"
+              else
+                echo "Nothing was merged since the last green run, at $PASSED."
+              fi
+            fi
             echo
             if [[ "$RESULT" == cancelled ]]; then
               echo "It was cancelled before it finished, so dev wasn't fully tested."
@@ -75,3 +112,5 @@ jobs:
           RESULT: ${{ inputs.result }}
           ASSIGNEE: ${{ inputs.assignee }}
           TITLE: ${{ inputs.title }}
+          TESTED: ${{ inputs.tested }}
+          PASSED: ${{ inputs.passed }}
