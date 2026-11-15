@@ -33,26 +33,6 @@ on:
         description: For task `none` on dev, `true` if the tests didn't run because nothing was deployed since they last ran.
         value: ${{ jobs.deploy.outputs.skipped }}
 
-# Where this run's merge group stands in the queue: `newer` if a later entry contains it, `last`,
-# `stale` if the queue has rebuilt it since, or `gone`.
-env:
-  QUEUE_QUERY: >-
-    query($owner: String!, $name: String!, $branch: String!) {
-      repository(owner: $owner, name: $name) {
-        mergeQueue(branch: $branch) {
-          entries(first: 100) { nodes { position state pullRequest { number } headCommit { oid } } }
-        }
-      }
-    }
-  # An UNMERGEABLE entry, one that conflicts, never starts a run, so it can't test this one. The
-  # wait job re-reads this each minute, so a newer entry that turns UNMERGEABLE makes this one last.
-  QUEUE_STATE: >-
-    (map(select(.pullRequest.number == $pr)) | first) as $me
-    | if $me == null then "gone"
-      elif $me.headCommit.oid != $sha then "stale"
-      elif any(.[]; .position > $me.position and .state != "UNMERGEABLE") then "newer"
-      else "last" end
-
 jobs:
   deploy:
     name: deploy to ${{ inputs.environment }}
@@ -60,7 +40,6 @@ jobs:
     environment: ${{ inputs.environment }}
     outputs:
       changes: ${{ steps.changes.outputs.changes }}
-      superseded: ${{ steps.gate.outputs.superseded }}
       tested: ${{ steps.state.outputs.tested }}
       passed: ${{ steps.state.outputs.passed }}
       skipped: ${{ steps.state.outputs.skipped }}
@@ -68,11 +47,11 @@ jobs:
     # Dev deploys wait in line, so a newer one never cancels one still waiting. Prod's newest replaces any waiting.
     # A test run (`none`) has its own group, so it never holds up the repo's next deploy before dev's lock can
     # put that deploy first. Its newest replaces any waiting, as the caller's own group does.
-    concurrency: &lock
+    concurrency:
       group: ${{ inputs.task == 'none' && 'integration' || 'deploy' }}-${{ github.repository }}-${{ inputs.environment }}
       cancel-in-progress: false
       queue: ${{ inputs.environment == 'dev' && inputs.task != 'none' && 'max' || 'single' }}
-    permissions: &permissions
+    permissions:
       id-token: write
       contents: read
     env:
@@ -80,12 +59,11 @@ jobs:
       PULUMI_STACK: ${{ inputs.environment == 'dev' && 'dev' || 'prod' }}
       # Pulumi authenticates its plugin downloads from GitHub releases with this, which avoids the anonymous rate limit.
       GITHUB_TOKEN: ${{ github.token }}
-      RETRY: false
       # Where dev's lock lives.
       DEV_CLUSTER: cyc
       DEV_LOCATION: us-west1
       DEV_NAMESPACE: dev
-    steps: &steps
+    steps:
       - name: Check the task
         shell: bash
         # workflow_call has no choice type. The value also goes into a shell command below.
@@ -93,65 +71,27 @@ jobs:
           [[ "$TASK" =~ ^(preview|deploy|reset|none)$ ]] || { echo "::error::task must be preview, deploy, reset, or none, not '$TASK'"; exit 1; }
         env:
           TASK: ${{ inputs.task }}
-      # A queued PR's run skips the deploy when a later entry, whose merge group contains this one, is
-      # queued behind it. That entry tests the whole batch, and HEADGREEN merges the batch if it passes.
-      - name: Check for a newer entry in the merge queue
-        id: gate
-        shell: bash
-        run: |
-          if [[ "$EVENT" != merge_group || "$RETRY" == true ]]; then
-            echo "deploy=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          pr="${HEAD_REF##*/pr-}"
-          pr="${pr%%-*}"
-          state="$(gh api graphql -f query="$QUEUE_QUERY" -f owner="${GITHUB_REPOSITORY%/*}" \
-            -f name="${GITHUB_REPOSITORY#*/}" -f branch="${BASE_REF#refs/heads/}" \
-            --jq .data.repository.mergeQueue.entries.nodes |
-            jq -r --argjson pr "$pr" --arg sha "$GITHUB_SHA" "$QUEUE_STATE")"
-          case "$state" in
-            last) echo "deploy=true" >> "$GITHUB_OUTPUT" ;;
-            newer)
-              echo "::notice::A newer PR in the merge queue contains this one, so its run tests both."
-              echo "superseded=true" >> "$GITHUB_OUTPUT"
-              ;;
-            # Failing a run that no longer counts is harmless, and fails closed if the query is wrong.
-            *)
-              echo "::error::This merge group is $state in the queue, so this run doesn't count."
-              exit 1
-              ;;
-          esac
-        env:
-          EVENT: ${{ github.event_name }}
-          HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          BASE_REF: ${{ github.event.merge_group.base_ref }}
-          GH_TOKEN: ${{ github.token }}
-      - if: steps.gate.outputs.deploy == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - if: steps.gate.outputs.deploy == 'true'
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
       # The lockfiles pin the Pulumi CLI and the providers, so they pick the plugins.
-      - if: steps.gate.outputs.deploy == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.pulumi/plugins
           key: pulumi-plugins-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'mise.lock') }}
           restore-keys: pulumi-plugins-${{ runner.os }}-
       # This sets GOOGLE_APPLICATION_CREDENTIALS, so the caller's mise.toml must not override it.
-      - if: steps.gate.outputs.deploy == 'true'
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-      - if: steps.gate.outputs.deploy == 'true'
-        run: mise run install
+      - run: mise run install
       # Every repo deploys to and tests against the same dev, and a concurrency group can't span repos
       # (#34). So dev's runs take turns through a ConfigMap in its namespace: creating it is atomic,
       # and a run that dies without releasing it leaves it to expire. This writes the helpers that the
       # steps below share.
       - name: Connect to dev
         id: dev
-        if: steps.gate.outputs.deploy == 'true' && inputs.environment == 'dev'
+        if: inputs.environment == 'dev'
         shell: bash
         run: |
           cluster="$(gcloud container clusters describe "$DEV_CLUSTER" --location "$DEV_LOCATION" \
@@ -303,7 +243,7 @@ jobs:
       # The fence keeps Markdown from folding the preview into one paragraph. pipefail comes from `shell: bash`.
       - name: Run the task
         id: task
-        if: steps.gate.outputs.deploy == 'true' && inputs.task != 'none'
+        if: inputs.task != 'none'
         shell: bash
         run: |
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -318,7 +258,7 @@ jobs:
       # A failed preview has already failed the job, so it never reads as no changes.
       - name: Read the preview's changes
         id: changes
-        if: steps.gate.outputs.deploy == 'true' && inputs.task == 'preview'
+        if: inputs.task == 'preview'
         shell: bash
         run: |
           if [[ ! -s "$DEPLOY_CHANGES_FILE" ]]; then
@@ -346,7 +286,7 @@ jobs:
           merge "$state" "{\"deployed\": \"$GITHUB_SHA\"}"
       - name: Integration tests
         id: integration
-        if: steps.gate.outputs.deploy == 'true' && inputs.integration && steps.state.outputs.skipped != 'true'
+        if: inputs.integration && steps.state.outputs.skipped != 'true'
         run: mise run integration
         env:
           DEPLOY_PROJECTS: ${{ inputs.projects }}
@@ -385,65 +325,3 @@ jobs:
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
-
-  # A superseded run waits outside the lock for the batch it joined. If the newer PRs fail and leave
-  # the queue, this PR is the last entry again, and deploys on its own once.
-  wait:
-    needs: deploy
-    if: needs.deploy.outputs.superseded == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    outputs:
-      retry: ${{ steps.wait.outputs.retry }}
-    permissions:
-      contents: read
-    steps:
-      - id: wait
-        shell: bash
-        run: |
-          pr="${HEAD_REF##*/pr-}"
-          pr="${pr%%-*}"
-          while true; do
-            state="$(gh api graphql -f query="$QUEUE_QUERY" -f owner="${GITHUB_REPOSITORY%/*}" \
-              -f name="${GITHUB_REPOSITORY#*/}" -f branch="${BASE_REF#refs/heads/}" \
-              --jq .data.repository.mergeQueue.entries.nodes |
-              jq -r --argjson pr "$pr" --arg sha "$GITHUB_SHA" "$QUEUE_STATE")"
-            case "$state" in
-              newer) sleep 60 ;;
-              last)
-                echo "::warning::The newer PRs in this batch failed and left the queue, so this PR deploys on its own."
-                echo "retry=true" >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-              *)
-                status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...${BASE_REF#refs/heads/}" --jq .status)"
-                if [[ "$status" == identical || "$status" == ahead ]]; then
-                  echo "Merged with its batch."
-                  exit 0
-                fi
-                echo "::error::This merge group is $state in the queue and didn't merge, so this run doesn't count."
-                exit 1
-                ;;
-            esac
-          done
-        env:
-          HEAD_REF: ${{ github.event.merge_group.head_ref }}
-          BASE_REF: ${{ github.event.merge_group.base_ref }}
-          GH_TOKEN: ${{ github.token }}
-  retry:
-    name: retry deploy to ${{ inputs.environment }}
-    needs: wait
-    if: needs.wait.outputs.retry == 'true'
-    runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    concurrency: *lock
-    permissions: *permissions
-    env:
-      PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
-      PULUMI_STACK: ${{ inputs.environment == 'dev' && 'dev' || 'prod' }}
-      GITHUB_TOKEN: ${{ github.token }}
-      RETRY: true
-      DEV_CLUSTER: cyc
-      DEV_LOCATION: us-west1
-      DEV_NAMESPACE: dev
-    steps: *steps
