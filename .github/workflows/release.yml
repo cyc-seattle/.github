@@ -39,7 +39,9 @@ jobs:
       # The comment and label options are off, so the job needs no issues or pull-requests permission,
       # and no `released` label is created. semantic-release and its default plugins are pinned to exact
       # versions, so a new release of any of them can't run with this job's rights until Renovate
-      # bumps it here.
+      # bumps it here. The conventionalcommits preset makes a `!` in a title a major release, which the
+      # default angular preset ignores (cyc-seattle/platform#283). Its 10.x needs a newer changelog
+      # writer than release-notes-generator 14 loads.
       - name: Release
         run: >-
           npx --yes
@@ -48,7 +50,8 @@ jobs:
           --package @semantic-release/release-notes-generator@14.1.1
           --package @semantic-release/npm@13.2.0
           --package @semantic-release/github@12.0.10
-          -- semantic-release --no-success-comment --no-fail-comment --no-released-labels
+          --package conventional-changelog-conventionalcommits@9.3.1
+          -- semantic-release --preset conventionalcommits --no-success-comment --no-fail-comment --no-released-labels
         env:
           GITHUB_TOKEN: ${{ github.token }}
       # The version output stays empty when the run released nothing.

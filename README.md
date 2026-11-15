@@ -57,12 +57,12 @@ Only `pr-title.yml` listens for `edited`, so editing a PR's title or description
 
 Every merge to `main` runs [semantic-release](https://github.com/semantic-release/semantic-release) once CI passes. It reads the conventional commits since the last `vX.Y.Z` tag and picks the bump:
 
-| Commit            | Release |
-| ----------------- | ------- |
-| `fix:`            | Patch   |
-| `feat:`           | Minor   |
-| `feat!:`, `fix!:` | Major   |
-| Any other type    | None    |
+| Commit                              | Release |
+| ----------------------------------- | ------- |
+| `fix:`                              | Patch   |
+| `feat:`                             | Minor   |
+| Any type with `!`, such as `feat!:` | Major   |
+| Any other type                      | None    |
 
 Then it publishes to npm with trusted publishing, tags the commit, and creates a GitHub release. It does not comment on issues or pull requests, and it adds no labels.
 
@@ -93,7 +93,7 @@ The job must grant both permissions. The rest of the workflow keeps `contents: r
 | `contents: write` | Push the tag, and create the GitHub release |
 | `id-token: write` | Publish to npm with trusted publishing      |
 
-semantic-release and its four default plugins run at exact versions, set in `release.yml`. Renovate bumps them in this repo.
+semantic-release, its four default plugins, and the `conventionalcommits` preset run at exact versions, set in `release.yml`. Renovate bumps them in this repo.
 
 ### Publish a container image
 
