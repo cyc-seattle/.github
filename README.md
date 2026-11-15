@@ -207,6 +207,8 @@ Then add `merge_group` to the PR title workflow's triggers too. The `pr-title` j
 
 The queue tests PRs in batches. Turn it on with up to 100 entries built and merged at a time, no wait time, and "Only merge non-failing pull requests" off (`HEADGREEN`). Each queued PR gets a run, and the queue's commit for a PR contains every PR ahead of it. A PR queued alone deploys at once. PRs queued while it runs wait in line. When a PR's run reaches the front, it skips the deploy if a newer PR is queued behind it, because that PR's run tests both. Under `HEADGREEN`, when the newest PR passes, the queue merges the whole batch in one push, so prod deploys once. If the newest PR fails, the queue removes it, and the PR just ahead of it deploys what's left of the batch. If that fails too, the queue removes that PR, and so on back through the batch. The queue itself doesn't bisect, so give its check timeout room for a few runs in a row.
 
+Every repo deploys to the same dev, and a concurrency group works only inside one repo. So a `dev` run also waits for dev's lock, a ConfigMap named `dev-lock` in the `dev` namespace of the `cyc` cluster, before its task, and holds it through the integration tests. It names the run that holds it. A run that dies without releasing it leaves it to expire after 75 minutes, and the next run takes it over. To free it sooner, delete the ConfigMap once that run has stopped. The service account needs `container.clusters.get` and write access to ConfigMaps in that namespace.
+
 The `dev` environment must allow the queue's branches, `gh-readonly-queue/main/...`, so leave its branch rule off. The OIDC subject names the environment, not the branch, so Workload Identity needs no change.
 
 The environment must hold these variables:
