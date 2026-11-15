@@ -282,6 +282,44 @@ fi
 
 cyc-seattle/platform's `scripts/each-stack` does this for each project.
 
+### Test dev nightly
+
+A repo whose merge queue only deploys to dev tests it once a night instead. Deploy `main` to dev with the integration
+tests, then report the result with `nightly-report.yml`. It keeps one open issue per repo: a failed night opens it,
+assigned to `assignee` so GitHub emails them, or comments on it, with the failing scenarios and the run's link. A
+green night closes it. The dev run takes dev's lock like any other.
+
+```yaml
+on:
+  schedule:
+    - cron: "17 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  dev:
+    uses: cyc-seattle/.github/.github/workflows/deploy.yml@v3.3.0
+    permissions:
+      id-token: write
+      contents: read
+    with:
+      environment: dev
+      task: deploy
+      integration: true
+  report:
+    needs: dev
+    if: always()
+    uses: cyc-seattle/.github/.github/workflows/nightly-report.yml@v3.3.0
+    permissions:
+      actions: read
+      issues: write
+    with:
+      result: ${{ needs.dev.result }}
+      assignee: <maintainer>
+```
+
+It finds the failing scenarios in the failed jobs' logs, from vitest's `FAIL` lines and Playwright's numbered ones.
+The issue's title defaults to `Nightly integration run failed`, and is how the workflow finds it again.
+
 ## Update dependencies with Renovate
 
 Every repo's `renovate.json` extends the shared preset, `renovate-config.json`:

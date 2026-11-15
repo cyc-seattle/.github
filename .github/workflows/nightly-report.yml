@@ -1,0 +1,77 @@
+name: nightly-report
+
+on:
+  workflow_call:
+    inputs:
+      result:
+        description: The nightly dev job's result, such as `needs.dev.result`.
+        type: string
+        required: true
+      assignee:
+        description: Who the issue is assigned to, so GitHub emails them when it opens.
+        type: string
+        required: true
+      title:
+        description: The issue's title. The workflow finds its open issue by it.
+        type: string
+        default: Nightly integration run failed
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      # One open issue per repo: a failed night opens it or adds to it, and a green night closes it.
+      - shell: bash
+        run: |
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          issue="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "in:title \"$TITLE\"" \
+            --json number,title --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")"
+
+          if [[ "$RESULT" == success ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue close "$issue" -R "$GITHUB_REPOSITORY" --comment "The nightly run passed: $run_url"
+            fi
+            exit 0
+          fi
+
+          # vitest prints `FAIL  <file> > <scenario>`, and Playwright `1) <file> › <scenario>`. Retries repeat them.
+          failures="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --paginate \
+            --jq '.jobs[] | select(.conclusion == "failure") | .id' |
+            while read -r job; do
+              # Not `gh api`: newer gh refuses to print output that holds terminal escapes, as test logs do.
+              curl -sSfL -H "Authorization: Bearer $GH_TOKEN" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" || true
+            done |
+            sed -E 's/^[^ ]+ //; s/(\x1b|\^\[)\[[0-9;]*m//g' |
+            grep -E '^\s*(FAIL\s|[0-9]+\) )' | sed -E 's/^\s*([0-9]+\) )?//; s/^FAIL\s+//' |
+            awk '!seen[$0]++' | head -n 50 || true)"
+          {
+            echo "The nightly run deployed \`main\` to dev and ran the integration tests. Its result was \`$RESULT\`."
+            echo
+            echo "Run: $run_url"
+            echo
+            if [[ "$RESULT" == cancelled ]]; then
+              echo "It was cancelled before it finished, so dev wasn't fully tested."
+            elif [[ -n "$failures" ]]; then
+              echo "Failing scenarios:"
+              echo
+              echo '```'
+              echo "$failures"
+              echo '```'
+            else
+              echo "No failing scenarios were found in the log, so the deploy or the run itself failed. Read the run."
+            fi
+          } > "$RUNNER_TEMP/body.md"
+
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --assignee "$ASSIGNEE" --body-file "$RUNNER_TEMP/body.md"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ inputs.result }}
+          ASSIGNEE: ${{ inputs.assignee }}
+          TITLE: ${{ inputs.title }}
