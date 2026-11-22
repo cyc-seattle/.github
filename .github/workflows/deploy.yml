@@ -19,6 +19,10 @@ on:
         description: Run `mise run integration` after the task.
         type: boolean
         default: false
+      integration-timeout:
+        description: Minutes the integration tests may run before the step fails, so a hang doesn't hold dev's lock.
+        type: number
+        default: 60
     outputs:
       changes:
         description: For `preview`, `true` if the preview shows changes and `false` if not. Empty for any other task.
@@ -287,6 +291,7 @@ jobs:
       - name: Integration tests
         id: integration
         if: inputs.integration && steps.state.outputs.skipped != 'true'
+        timeout-minutes: ${{ inputs.integration-timeout }}
         run: mise run integration
         env:
           DEPLOY_PROJECTS: ${{ inputs.projects }}
