@@ -144,12 +144,13 @@ jobs:
       integration: true
 ```
 
-| Input         | Does                                                                                |
-| ------------- | ----------------------------------------------------------------------------------- |
-| `environment` | Required. The GitHub environment the job runs in, for example `dev`                 |
-| `task`        | Required. `preview`, `deploy`, `reset`, or `none`. The job fails on any other value |
-| `projects`    | The Pulumi projects to run on, separated by spaces. Defaults to empty, for all      |
-| `integration` | Runs `mise run integration` after the task. Defaults to false                       |
+| Input                 | Does                                                                                |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `environment`         | Required. The GitHub environment the job runs in, for example `dev`                 |
+| `task`                | Required. `preview`, `deploy`, `reset`, or `none`. The job fails on any other value |
+| `projects`            | The Pulumi projects to run on, separated by spaces. Defaults to empty, for all      |
+| `integration`         | Runs `mise run integration` after the task. Defaults to false                       |
+| `integration-timeout` | Minutes the integration tests may run before the step fails. Defaults to 20         |
 
 When the integration tests fail, the job uploads the caller's `test-results/` as the `test-results-<environment>` artifact, kept 7 days, so a failed journey's page snapshot and trace can be read. A repo whose tests write elsewhere uploads nothing.
 
