@@ -4,38 +4,21 @@ on:
   workflow_call:
     inputs:
       environment:
-        description: The GitHub environment to deploy to, such as `dev`, `prod-preview`, or `prod`.
+        description: The GitHub environment to deploy to, such as `prod-preview` or `prod`.
         type: string
         required: true
       task:
-        description: The mise task to run, `preview`, `deploy`, or `reset`. `none` runs no task, for integration alone, and on dev lets deploys go first.
+        description: The mise task to run, `preview` or `deploy`.
         type: string
         required: true
       projects:
         description: The Pulumi projects to run the task on, separated by spaces. Empty means the caller's full list.
         type: string
         default: ""
-      integration:
-        description: Run `mise run integration` after the task.
-        type: boolean
-        default: false
-      integration-timeout:
-        description: Minutes the integration tests may run before the step fails, so a hang doesn't hold dev's lock.
-        type: number
-        default: 60
     outputs:
       changes:
         description: For `preview`, `true` if the preview shows changes and `false` if not. Empty for any other task.
         value: ${{ jobs.deploy.outputs.changes }}
-      tested:
-        description: For task `none` on dev, the commit the integration tests ran on, the one last deployed there. Empty if they didn't run.
-        value: ${{ jobs.deploy.outputs.tested }}
-      passed:
-        description: For task `none` on dev, the last commit the integration tests passed on before this run. Empty if none is recorded.
-        value: ${{ jobs.deploy.outputs.passed }}
-      skipped:
-        description: For task `none` on dev, `true` if the tests didn't run because nothing was deployed since they last ran.
-        value: ${{ jobs.deploy.outputs.skipped }}
 
 jobs:
   deploy:
@@ -44,35 +27,25 @@ jobs:
     environment: ${{ inputs.environment }}
     outputs:
       changes: ${{ steps.changes.outputs.changes }}
-      tested: ${{ steps.state.outputs.tested }}
-      passed: ${{ steps.state.outputs.passed }}
-      skipped: ${{ steps.state.outputs.skipped }}
     # One deploy at a time per repo and environment. Cancelling a Pulumi update halfway leaves a lock behind.
-    # Dev deploys wait in line, so a newer one never cancels one still waiting. Prod's newest replaces any waiting.
-    # A test run (`none`) has its own group, so it never holds up the repo's next deploy before dev's lock can
-    # put that deploy first. Its newest replaces any waiting, as the caller's own group does.
+    # The newest replaces any waiting.
     concurrency:
-      group: ${{ inputs.task == 'none' && 'integration' || 'deploy' }}-${{ github.repository }}-${{ inputs.environment }}
+      group: deploy-${{ github.repository }}-${{ inputs.environment }}
       cancel-in-progress: false
-      queue: ${{ inputs.environment == 'dev' && inputs.task != 'none' && 'max' || 'single' }}
     permissions:
       id-token: write
       contents: read
     env:
       PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
-      PULUMI_STACK: ${{ inputs.environment == 'dev' && 'dev' || 'prod' }}
+      PULUMI_STACK: prod
       # Pulumi authenticates its plugin downloads from GitHub releases with this, which avoids the anonymous rate limit.
       GITHUB_TOKEN: ${{ github.token }}
-      # Where dev's lock lives.
-      DEV_CLUSTER: cyc
-      DEV_LOCATION: us-west1
-      DEV_NAMESPACE: dev
     steps:
       - name: Check the task
         shell: bash
         # workflow_call has no choice type. The value also goes into a shell command below.
         run: |
-          [[ "$TASK" =~ ^(preview|deploy|reset|none)$ ]] || { echo "::error::task must be preview, deploy, reset, or none, not '$TASK'"; exit 1; }
+          [[ "$TASK" =~ ^(preview|deploy)$ ]] || { echo "::error::task must be preview or deploy, not '$TASK'"; exit 1; }
         env:
           TASK: ${{ inputs.task }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,165 +62,9 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       - run: mise run install
-      # Every repo deploys to and tests against the same dev, and a concurrency group can't span repos
-      # (#34). So dev's runs take turns through a ConfigMap in its namespace: creating it is atomic,
-      # and a run that dies without releasing it leaves it to expire. This writes the helpers that the
-      # steps below share.
-      - name: Connect to dev
-        id: dev
-        if: inputs.environment == 'dev'
-        shell: bash
-        run: |
-          cluster="$(gcloud container clusters describe "$DEV_CLUSTER" --location "$DEV_LOCATION" \
-            --format='value(endpoint,masterAuth.clusterCaCertificate)')"
-          base64 -d <<< "${cluster##*[[:space:]]}" > "$RUNNER_TEMP/dev-ca.crt"
-          echo "url=https://${cluster%%[[:space:]]*}/api/v1/namespaces/$DEV_NAMESPACE/configmaps" > "$RUNNER_TEMP/dev.sh"
-          cat >> "$RUNNER_TEMP/dev.sh" <<'EOF'
-          holder="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
-          # This run's key in dev-lock-deploys, while it's a deploy waiting for the lock.
-          waiter="${GITHUB_REPOSITORY//\//.}.$GITHUB_RUN_ID.$GITHUB_RUN_ATTEMPT"
-          # This repo's record of the commit last deployed to dev, and the last ones tested and passed there.
-          state="dev-state-${GITHUB_REPOSITORY//\//.}"
-          state="${state,,}"
-
-          # kube METHOD [CONFIGMAP [BODY]] prints the status, and leaves the response in $RUNNER_TEMP/kube.json.
-          kube() {
-            local type=application/json
-            if [[ "$1" == PATCH ]]; then type=application/merge-patch+json; fi
-            curl -sS --cacert "$RUNNER_TEMP/dev-ca.crt" -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-              -H "Content-Type: $type" -X "$1" ${3:+--data "$3"} -o "$RUNNER_TEMP/kube.json" -w '%{http_code}' \
-              "$url${2:+/$2}" || true
-          }
-
-          # merge CONFIGMAP DATA merges DATA, a JSON object, into the ConfigMap's data. A null value removes its key.
-          merge() {
-            local status
-            status="$(kube PATCH "$1" "{\"data\":$2}")"
-            if [[ "$status" == 404 ]]; then
-              status="$(kube POST "" "$(jq -n --arg name "$1" --argjson data "$2" \
-                '{apiVersion: "v1", kind: "ConfigMap", metadata: {name: $name}, data: ($data | with_entries(select(.value != null)))}')")"
-              # 409 means another run created it first.
-              if [[ "$status" == 409 ]]; then status="$(kube PATCH "$1" "{\"data\":$2}")"; fi
-            fi
-            [[ "$status" == 200 || "$status" == 201 ]] || { echo "::warning::Writing $1 returned $status."; return 1; }
-          }
-
-          # Whether a deploy is waiting for the lock. Each refreshes its key while it waits, so a dead one's soon expires.
-          deploy_waiting() {
-            [[ "$(kube GET dev-lock-deploys)" == 200 ]] &&
-              jq -e --argjson now "$(date +%s)" '.data // {} | any(.[]; tonumber > $now)' "$RUNNER_TEMP/kube.json" > /dev/null
-          }
-
-          # Releases only this run's lock: one held past its expiry may belong to another run by now. The
-          # resourceVersion stops a delete racing a run that took it over.
-          release() {
-            local status rv
-            status="$(kube GET dev-lock)"
-            if [[ "$status" != 200 || "$(jq -r .data.holder "$RUNNER_TEMP/kube.json")" != "$holder" ]]; then
-              echo "::warning::This run no longer holds dev's lock."
-              return 0
-            fi
-            rv="$(jq -r .metadata.resourceVersion "$RUNNER_TEMP/kube.json")"
-            status="$(kube DELETE dev-lock "{\"preconditions\":{\"resourceVersion\":\"$rv\"}}")"
-            if [[ "$status" != 200 ]]; then
-              echo "::warning::Releasing dev's lock returned $status, so it waits out its expiry."
-              cat "$RUNNER_TEMP/kube.json"
-            fi
-          }
-          EOF
-      # Deploys go first, so prod never waits behind a test run. A waiting deploy keeps a key in
-      # dev-lock-deploys, and a test run (`none`) takes the lock only while no deploy is waiting.
-      - name: Wait for dev's lock
-        id: lock
-        if: steps.dev.conclusion == 'success'
-        timeout-minutes: 120
-        shell: bash
-        run: |
-          source "$RUNNER_TEMP/dev.sh"
-          while true; do
-            if [[ "$TASK" != none ]]; then
-              merge dev-lock-deploys "{\"$waiter\": \"$(($(date +%s) + 300))\"}" || true
-            elif deploy_waiting; then
-              echo "Waiting for a deploy to go first."
-              sleep 30
-              continue
-            fi
-            body="$(jq -n --arg holder "$holder" --arg expires "$(($(date +%s) + LOCK_MINUTES * 60))" --arg rv "${rv:-}" \
-              '{apiVersion: "v1", kind: "ConfigMap", metadata: ({name: "dev-lock"} + if $rv == "" then {} else {resourceVersion: $rv} end), data: {holder: $holder, expires: $expires}}')"
-            if [[ -z "${rv:-}" ]]; then
-              status="$(kube POST "" "$body")"
-            else
-              status="$(kube PUT dev-lock "$body")"
-            fi
-            rv=
-            if [[ "$status" == 200 || "$status" == 201 ]]; then
-              if [[ "$TASK" != none ]]; then
-                merge dev-lock-deploys "{\"$waiter\": null}" || true
-              elif deploy_waiting; then
-                # A deploy started waiting while this run took the lock.
-                echo "A deploy is waiting, so this run lets it go first."
-                release
-                continue
-              fi
-              echo "This run holds dev's lock."
-              exit 0
-            fi
-            # 409 means another run holds it, or took it first. Anything else is retried too.
-            status="$(kube GET dev-lock)"
-            if [[ "$status" == 200 ]]; then
-              if (($(jq -r .data.expires "$RUNNER_TEMP/kube.json") < $(date +%s))); then
-                echo "::warning::$(jq -r .data.holder "$RUNNER_TEMP/kube.json") held dev's lock past its expiry, so this run takes it."
-                rv="$(jq -r .metadata.resourceVersion "$RUNNER_TEMP/kube.json")"
-                continue
-              fi
-              echo "Waiting for $(jq -r .data.holder "$RUNNER_TEMP/kube.json") to finish with dev."
-            elif [[ "$status" != 404 ]]; then
-              echo "::warning::Reading dev's lock returned $status."
-            fi
-            sleep 30
-          done
-        env:
-          TASK: ${{ inputs.task }}
-          LOCK_MINUTES: 75
-      # A test run tests the commit last deployed to dev, which may be newer than its own if a deploy
-      # went first. It skips a commit it already tested, so it runs only once something new is on dev.
-      - name: Find the commit on dev
-        id: state
-        if: steps.lock.conclusion == 'success' && inputs.task == 'none'
-        shell: bash
-        run: |
-          source "$RUNNER_TEMP/dev.sh"
-          status="$(kube GET "$state")"
-          if [[ "$status" == 404 ]]; then
-            echo '{}' > "$RUNNER_TEMP/kube.json"
-          elif [[ "$status" != 200 ]]; then
-            echo "::error::Reading $state returned $status."
-            exit 1
-          fi
-          deployed="$(jq -r '.data.deployed // empty' "$RUNNER_TEMP/kube.json")"
-          tested="$(jq -r '.data.tested // empty' "$RUNNER_TEMP/kube.json")"
-          echo "passed=$(jq -r '.data.passed // empty' "$RUNNER_TEMP/kube.json")" >> "$GITHUB_OUTPUT"
-          if [[ -z "$deployed" ]]; then
-            echo "::notice::No dev deploy of this repo is recorded, so this run tests its own commit."
-            deployed="$GITHUB_SHA"
-          fi
-          if [[ "$deployed" == "$tested" && "$GITHUB_RUN_ATTEMPT" == 1 ]]; then
-            echo "::notice::The integration tests already ran on $deployed, the commit on dev. Re-run this job to run them again."
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "tested=$deployed" >> "$GITHUB_OUTPUT"
-          if [[ "$deployed" != "$(git rev-parse HEAD)" ]]; then
-            echo "Dev has $deployed, so this run tests that."
-            git fetch --no-tags --depth=1 origin "$deployed"
-            git checkout -q --detach FETCH_HEAD
-            mise install
-            mise run install
-          fi
       # The fence keeps Markdown from folding the preview into one paragraph. pipefail comes from `shell: bash`.
       - name: Run the task
         id: task
-        if: inputs.task != 'none'
         shell: bash
         run: |
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -281,52 +98,3 @@ jobs:
           echo "changes=$changes" | tee -a "$GITHUB_OUTPUT"
         env:
           DEPLOY_CHANGES_FILE: ${{ runner.temp }}/deploy-changes
-      # A test run tests the commit last deployed to dev, so a deploy records it.
-      - name: Record the deploy
-        if: steps.dev.conclusion == 'success' && inputs.task == 'deploy'
-        shell: bash
-        run: |
-          source "$RUNNER_TEMP/dev.sh"
-          merge "$state" "{\"deployed\": \"$GITHUB_SHA\"}"
-      - name: Integration tests
-        id: integration
-        if: inputs.integration && steps.state.outputs.skipped != 'true'
-        timeout-minutes: ${{ inputs.integration-timeout }}
-        run: mise run integration
-        env:
-          DEPLOY_PROJECTS: ${{ inputs.projects }}
-      # So the next test run skips what's already tested, and a failure's report can list the PRs since the last pass.
-      - name: Record the test run
-        if: >-
-          always() && steps.dev.conclusion == 'success' &&
-          (steps.integration.outcome == 'success' || steps.integration.outcome == 'failure')
-        continue-on-error: true
-        shell: bash
-        run: |
-          source "$RUNNER_TEMP/dev.sh"
-          merge "$state" "$(jq -n --arg sha "$TESTED" --argjson passed "$PASSED" '{tested: $sha} + if $passed then {passed: $sha} else {} end')"
-        env:
-          TESTED: ${{ steps.state.outputs.tested || github.sha }}
-          PASSED: ${{ steps.integration.outcome == 'success' }}
-      - name: Release dev's lock
-        if: always() && steps.dev.conclusion == 'success'
-        # A lock left behind expires, so failing to release it mustn't fail a run that passed.
-        continue-on-error: true
-        shell: bash
-        run: |
-          source "$RUNNER_TEMP/dev.sh"
-          # A deploy cancelled while it waited leaves its key behind.
-          if [[ "$TASK" != none ]]; then merge dev-lock-deploys "{\"$waiter\": null}" || true; fi
-          if [[ "$LOCKED" == true ]]; then release; fi
-        env:
-          TASK: ${{ inputs.task }}
-          LOCKED: ${{ steps.lock.conclusion == 'success' }}
-      # So a failed journey's page snapshot and trace can be read. Playwright writes them to test-results/.
-      - name: Upload test results
-        if: failure() && inputs.integration
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: test-results-${{ inputs.environment }}
-          path: test-results/
-          retention-days: 7
-          if-no-files-found: ignore
